@@ -1,0 +1,38 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request"
+      },
+      "enableLiveMetrics": true,
+      "enableDependencyTracking": true
+    },
+    "logLevel": {
+      "default": "Information",
+      "Host.Results": "Warning"
+    }
+  },
+  "extensions": {
+    "blobs": {
+      "maxDequeueCount": 5
+    },
+    "queues": {
+      "maxDequeueCount": 5
+    },
+    "durableTask": {
+      "tracing": {
+        "traceInputsAndOutputs": false,
+        "traceReplayEvents": false
+      }
+    }
+  },
+  "concurrency": {
+    "dynamicConcurrencyEnabled": false
+  },
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.0.0, 5.0.0)"
+  }
+}

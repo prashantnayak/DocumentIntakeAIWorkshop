@@ -1,0 +1,7 @@
+azure-functions==1.23.0
+azure-functions-durable==1.2.10
+azure-identity==1.25.1
+azure-storage-blob==12.26.0
+azure-ai-documentintelligence==1.0.2
+pyodbc==5.2.0
+

@@ -1,0 +1,42 @@
+{
+  "serviceProviderConnections": {
+    "sql": {
+      "displayName": "intake-sql",
+      "parameterValues": {
+        "serverName": "@appsetting('Sql_DataSource')",
+        "databaseName": "@appsetting('Sql_InitialCatalog')"
+      },
+      "serviceProvider": {
+        "id": "/serviceProviders/sql"
+      },
+      "authentication": {
+        "type": "ManagedServiceIdentity",
+        "identity": "@appsetting('Sql_UserAssignedIdentityResourceId')"
+      }
+    },
+    "AzureBlob": {
+      "displayName": "intake-phi-blob",
+      "parameterValues": {
+        "blobStorageEndpoint": "@appsetting('PhiStorage_BlobServiceUri')"
+      },
+      "serviceProvider": {
+        "id": "/serviceProviders/AzureBlob"
+      },
+      "authentication": {
+        "type": "ManagedServiceIdentity"
+      }
+    }
+  },
+  "managedApiConnections": {
+    "office365": {
+      "api": {
+        "id": "/subscriptions/@{appsetting('WORKFLOWS_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('WORKFLOWS_LOCATION_NAME')}/managedApis/office365"
+      },
+      "connection": {
+        "id": "@appsetting('Office365_ConnectionResourceId')"
+      },
+      "connectionRuntimeUrl": "@parameters('office365-ConnectionRuntimeUrl')",
+      "authentication": "@parameters('office365-Authentication')"
+    }
+  }
+}

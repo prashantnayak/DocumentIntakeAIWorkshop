@@ -1,0 +1,50 @@
+# ---- Bicep / Azure ----
+*.bicepparam.user
+.bicep/
+# Ignore *contents* of any .azure/ folder (not the directory itself) so the
+# two specific root-level reference files below can be re-included -- Git
+# cannot re-include a file whose parent directory is itself excluded.
+**/.azure/*
+!/.azure/infrastructure-plan.json
+!/.azure/insights.json
+*.azcli.log
+infra/**/*.json
+!infra/**/*.parameters.example.json
+# Hand-authored ARM JSON module (Bicep has no published types for
+# Microsoft.Web/connections/accessPolicies) -- source, not build output.
+!infra/modules/connection-access-policy.json
+
+# ---- Python / Azure Functions ----
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.python_packages/
+packages/
+src/functions/**/local.settings.json
+
+# ---- Logic Apps local dev ----
+src/logicapps/**/local.settings.json
+src/logicapps/**/.vscode/
+src/logicapps/**/workflow-designtime/
+
+# ---- Node (tooling only, no app runtime uses Node) ----
+node_modules/
+
+# ---- Secrets / local overrides (never commit) ----
+*.env
+.env.*
+**/secrets.json
+**/*.secrets.json
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+
+# ---- Test / scratch output ----
+tests/**/TestResults/
+tests/**/*.trx
+tests/ps-rule/out/
+out/
+*.log

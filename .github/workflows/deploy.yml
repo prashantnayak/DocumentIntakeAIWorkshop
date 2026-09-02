@@ -1,0 +1,474 @@
+name: Deploy
+
+# Manual-only deployment with an explicit approval gate. This workshop's
+# confirmed scope is a single "dev" environment in Sweden Central (see
+# docs/ASSUMPTIONS.md) -- the environment choice list intentionally has only
+# one entry today. To extend to test/prod: add infra/params/<env>.bicepparam,
+# run scripts/bootstrap.ps1 -GitHubEnvironment <env>, add a matching
+# protected GitHub Environment with required reviewers, then add <env> to
+# the `options` list below.
+#
+# THREE JOBS, IN ORDER:
+#   1. build-packages  (GitHub-hosted)  - compiles and zips both applications.
+#   2. infra           (GitHub-hosted)  - what-if + az deployment sub create.
+#   3. deploy-code     (SELF-HOSTED,
+#                       VNet-joined)    - publishes the packages.
+#
+# WHY JOB 3 CANNOT RUN ON A GITHUB-HOSTED RUNNER
+# Every data-plane endpoint in this workload is private-endpoint-only
+# (publicNetworkAccess=Disabled), including the runtime storage account that
+# holds the deployment-artifacts container and the Logic App's SCM/Kudu
+# endpoint. A GitHub-hosted runner has no route to either, and opening public
+# access to reach them would defeat the entire network design. The code-deploy
+# job therefore runs on a self-hosted runner joined to (or peered with) the
+# workload VNet, using the private DNS zones this deployment creates.
+# See README.md -> "Self-hosted runner requirements".
+#
+# WHAT THE CODE-DEPLOY JOB ACTUALLY DOES
+#   * Function App    - uploads function-python/current.zip to the private
+#                       deployment-artifacts container, then restarts the app.
+#                       The app pulls the package itself with its user-assigned
+#                       managed identity (WEBSITE_RUN_FROM_PACKAGE points at
+#                       that stable blob URL and
+#                       WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID names the
+#                       identity), so no SCM access is needed for Functions.
+#   * Logic App Std   - Logic Apps Standard does not support running from an
+#                       external package URL; zip deploy through SCM is the
+#                       supported path, so `az logicapp deployment source
+#                       config-zip` is used. The package is ALSO uploaded to
+#                       the artifacts container for rollback/audit parity.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options:
+          - dev
+        default: dev
+        required: true
+      confirm:
+        description: 'Type DEPLOY to confirm you intend to run az deployment sub create'
+        type: string
+        required: true
+      deploy_application_code:
+        description: 'Publish the Function and Logic App code after the infrastructure deployment (requires the self-hosted VNet-joined runner)'
+        type: boolean
+        default: true
+        required: true
+      code_deploy_runner_label:
+        description: 'runs-on label of the self-hosted, VNet-joined runner used for the code-deploy job'
+        type: string
+        default: 'self-hosted'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build-packages:
+    name: Build deployment packages
+    runs-on: ubuntu-latest
+    env:
+      CONFIRM_INPUT: ${{ inputs.confirm }}
+    steps:
+      - name: Validate confirmation input
+        run: |
+          if [ "$CONFIRM_INPUT" != "DEPLOY" ]; then
+            echo "::error::Confirmation input must be exactly 'DEPLOY' (was '$CONFIRM_INPUT'). Aborting without making any changes."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: src/functions/requirements*.txt
+
+      - name: Build Python Function package
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r src/functions/requirements-dev.txt
+          python -m compileall -q src/functions tests/functions
+          python -m pytest -q tests/functions
+          mkdir -p "$RUNNER_TEMP/function-publish/.python_packages/lib/site-packages"
+          python -m pip install --disable-pip-version-check \
+            --requirement src/functions/requirements.txt \
+            --target "$RUNNER_TEMP/function-publish/.python_packages/lib/site-packages"
+          cp -R src/functions/. "$RUNNER_TEMP/function-publish/"
+          rm -rf "$RUNNER_TEMP/function-publish/.pytest_cache" \
+            "$RUNNER_TEMP/function-publish/local.settings.json" \
+            "$RUNNER_TEMP/function-publish/local.settings.sample.json" \
+            "$RUNNER_TEMP/function-publish/requirements-dev.txt"
+
+      - name: Zip the Function package
+        run: |
+          set -euo pipefail
+          mkdir -p packages
+          # Zip from INSIDE the publish folder: run-from-package expects
+          # host.json at the archive root, not under a subdirectory.
+          (cd "$RUNNER_TEMP/function-publish" && zip -r -q "$GITHUB_WORKSPACE/packages/function-app.zip" .)
+          unzip -l packages/function-app.zip | tail -5
+
+      - name: Zip the Logic Apps Standard package
+        run: |
+          set -euo pipefail
+          mkdir -p packages
+          # host.json, connections.json, parameters.json and the workflow
+          # folders must sit at the archive root for Logic Apps zip deploy.
+          (cd src/logicapps && zip -r -q "$GITHUB_WORKSPACE/packages/logic-app.zip" . -x 'local.settings.json' -x '*/local.settings.json')
+          unzip -l packages/logic-app.zip | tail -10
+
+      - name: Verify both packages contain their expected entry points
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -l packages/function-app.zip | grep -q ' host.json$' || { echo "::error::function-app.zip is missing host.json at its root."; exit 1; }
+          unzip -l packages/logic-app.zip | grep -q ' host.json$' || { echo "::error::logic-app.zip is missing host.json at its root."; exit 1; }
+          unzip -l packages/logic-app.zip | grep -q 'workflows/business-rules-workflow/workflow.json$' || { echo "::error::logic-app.zip is missing the workflow definitions."; exit 1; }
+
+      - name: Upload packages
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: application-packages
+          path: packages/
+          retention-days: 7
+          if-no-files-found: error
+
+  infra:
+    name: Infrastructure (${{ inputs.environment }})
+    needs: [build-packages]
+    runs-on: ubuntu-latest
+    # Gates this job behind the GitHub Environment's protection rules
+    # (required reviewers / wait timer), configured in repo Settings ->
+    # Environments, and supplies the OIDC federated-credential subject
+    # `repo:<org>/<repo>:environment:<environment>` created by
+    # scripts/bootstrap.ps1.
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      resource-group: ${{ steps.deploy.outputs.resource-group }}
+      function-app-name: ${{ steps.deploy.outputs.function-app-name }}
+      logic-app-name: ${{ steps.deploy.outputs.logic-app-name }}
+      artifacts-account: ${{ steps.deploy.outputs.artifacts-account }}
+      artifacts-container: ${{ steps.deploy.outputs.artifacts-container }}
+      deployment-name: ${{ steps.deploy.outputs.deployment-name }}
+      key-vault-name: ${{ steps.deploy.outputs.key-vault-name }}
+      callback-secret-name: ${{ steps.deploy.outputs.callback-secret-name }}
+    env:
+      # Indirection through job-level env vars (rather than interpolating
+      # ${{ inputs.* }} directly into script bodies) avoids shell/PowerShell
+      # parsing ambiguity and follows GitHub's documented guidance for
+      # safely handling user-supplied workflow_dispatch input.
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Bicep CLI
+        run: az bicep install
+
+      - name: az bicep build (fail fast before any Azure call)
+        run: az bicep build --file infra/main.bicep --outfile /dev/null
+
+      - name: Azure login (OIDC, no client secret)
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: az deployment sub what-if (for the record)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:GITHUB_WORKSPACE/.github/workflows/scripts/build-extra-parameters.ps1"
+          $extraArgs = Get-ExtraDeploymentParameters
+          $baseArgs = @(
+            'deployment', 'sub', 'what-if',
+            '--location', 'swedencentral',
+            '--template-file', 'infra/main.bicep',
+            '--parameters', "infra/params/$($env:TARGET_ENVIRONMENT).bicepparam",
+            '--no-pretty-print'
+          )
+          & az @baseArgs @extraArgs
+          if ($LASTEXITCODE -ne 0) { throw 'what-if failed -- aborting before any resource is created.' }
+        env:
+          ENTRA_GROUPS_JSON: ${{ secrets.AZURE_ENTRA_GROUPS_JSON }}
+          ALERTING_JSON: ${{ secrets.AZURE_ALERTING_JSON }}
+          TAGS_JSON: ${{ secrets.AZURE_TAGS_JSON }}
+          DEPLOYER_OBJECT_ID: ${{ secrets.AZURE_DEPLOYER_OBJECT_ID }}
+
+      - name: az deployment sub create
+        id: deploy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:GITHUB_WORKSPACE/.github/workflows/scripts/build-extra-parameters.ps1"
+          $extraArgs = Get-ExtraDeploymentParameters
+          $deploymentName = "intakeai-$($env:TARGET_ENVIRONMENT)-$($env:GITHUB_RUN_ID)"
+
+          $baseArgs = @(
+            'deployment', 'sub', 'create',
+            '--location', 'swedencentral',
+            '--name', $deploymentName,
+            '--template-file', 'infra/main.bicep',
+            '--parameters', "infra/params/$($env:TARGET_ENVIRONMENT).bicepparam"
+          )
+          & az @baseArgs @extraArgs -o json | Tee-Object -FilePath deployment-result.json
+          if ($LASTEXITCODE -ne 0) { throw "az deployment sub create failed for deployment '$deploymentName'." }
+
+          $outputs = (Get-Content -Raw deployment-result.json | ConvertFrom-Json).properties.outputs
+          @(
+            "deployment-name=$deploymentName"
+            "resource-group=$($outputs.resourceGroupName.value)"
+            "function-app-name=$($outputs.functionAppName.value)"
+            "logic-app-name=$($outputs.logicAppName.value)"
+            "artifacts-account=$($outputs.deploymentArtifactsStorageAccountName.value)"
+            "artifacts-container=$($outputs.deploymentArtifactsContainerName.value)"
+            "key-vault-name=$($outputs.keyVaultName.value)"
+            "callback-secret-name=$($outputs.businessRulesCallbackSecret.value)"
+          ) | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        env:
+          ENTRA_GROUPS_JSON: ${{ secrets.AZURE_ENTRA_GROUPS_JSON }}
+          ALERTING_JSON: ${{ secrets.AZURE_ALERTING_JSON }}
+          TAGS_JSON: ${{ secrets.AZURE_TAGS_JSON }}
+          DEPLOYER_OBJECT_ID: ${{ secrets.AZURE_DEPLOYER_OBJECT_ID }}
+
+      - name: Upload deployment result
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: deployment-result
+          path: deployment-result.json
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy-code:
+    name: Publish application code
+    needs: [build-packages, infra]
+    if: inputs.deploy_application_code
+    runs-on: ${{ inputs.code_deploy_runner_label }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      RESOURCE_GROUP: ${{ needs.infra.outputs.resource-group }}
+      FUNCTION_APP_NAME: ${{ needs.infra.outputs.function-app-name }}
+      LOGIC_APP_NAME: ${{ needs.infra.outputs.logic-app-name }}
+      ARTIFACTS_ACCOUNT: ${{ needs.infra.outputs.artifacts-account }}
+      ARTIFACTS_CONTAINER: ${{ needs.infra.outputs.artifacts-container }}
+      KEY_VAULT_NAME: ${{ needs.infra.outputs.key-vault-name }}
+      CALLBACK_SECRET_NAME: ${{ needs.infra.outputs.callback-secret-name }}
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: application-packages
+          path: packages
+
+      - name: Azure login (OIDC, no client secret)
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Confirm the runner can reach the private endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="${ARTIFACTS_ACCOUNT}.blob.core.windows.net"
+          resolved="$(getent hosts "$host" | awk '{print $1}' | head -1 || true)"
+          if [ -z "$resolved" ]; then
+            echo "::error::This runner cannot resolve $host. The code-deploy job must run on a self-hosted runner joined to (or peered with) the workload VNet and using its private DNS zones. See README.md -> 'Self-hosted runner requirements'."
+            exit 1
+          fi
+          echo "$host resolves to $resolved"
+          case "$resolved" in
+            10.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|192.168.*) ;;
+            *)
+              echo "::error::$host resolved to the PUBLIC address $resolved, not a private endpoint. The runner is not using the workload's private DNS zones; uploads would be blocked by the storage firewall."
+              exit 1
+              ;;
+          esac
+
+      - name: Publish packages to the private deployment-artifacts container
+        shell: bash
+        run: |
+          set -euo pipefail
+          az storage blob upload \
+            --auth-mode login \
+            --account-name "$ARTIFACTS_ACCOUNT" \
+            --container-name "$ARTIFACTS_CONTAINER" \
+            --name "function-python/current.zip" \
+            --file packages/function-app.zip \
+            --overwrite true \
+            --only-show-errors
+          az storage blob upload \
+            --auth-mode login \
+            --account-name "$ARTIFACTS_ACCOUNT" \
+            --container-name "$ARTIFACTS_CONTAINER" \
+            --name "logic-app/current.zip" \
+            --file packages/logic-app.zip \
+            --overwrite true \
+            --only-show-errors
+          echo "Both packages published to https://${ARTIFACTS_ACCOUNT}.blob.core.windows.net/${ARTIFACTS_CONTAINER}/"
+
+      - name: Publish the Logic Apps Standard workflows (zip deploy via private SCM)
+        shell: bash
+        run: |
+          set -euo pipefail
+          az logicapp deployment source config-zip \
+            --name "$LOGIC_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --src packages/logic-app.zip \
+            --only-show-errors
+
+      - name: Verify all three workflows are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          subscription_id="$(az account show --query id -o tsv)"
+          expected="business-rules-workflow human-approval-workflow sla-notification-workflow"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            workflows="$(az rest --method get \
+              --url "https://management.azure.com/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${LOGIC_APP_NAME}/workflows?api-version=2018-11-01" \
+              --query "value[].name" -o tsv --only-show-errors 2>/dev/null || true)"
+            missing=""
+            for w in $expected; do
+              echo "$workflows" | grep -q "$w" || missing="$missing $w"
+            done
+            if [ -z "$missing" ]; then
+              echo "All workflows present: $workflows"
+              exit 0
+            fi
+            echo "Attempt $attempt: still missing:$missing (waiting 30s)"
+            sleep 30
+          done
+          echo "::error::Logic App workflows missing after zip deploy:$missing. The approval pipeline is NOT deployed."
+          exit 1
+
+      - name: Rotate the signed business-rules callback in Key Vault
+        shell: bash
+        run: |
+          set -euo pipefail
+          subscription_id="$(az account show --query id -o tsv)"
+          callback_url="$(az rest --method post \
+            --url "https://management.azure.com/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${LOGIC_APP_NAME}/hostruntime/runtime/webhooks/workflow/api/management/workflows/business-rules-workflow/triggers/Receive_processing_request/listCallbackUrl?api-version=2018-11-01" \
+            --query value -o tsv --only-show-errors)"
+          if [ -z "$callback_url" ]; then
+            echo "::error::The business-rules workflow did not return a signed callback URL."
+            exit 1
+          fi
+          az keyvault secret set \
+            --vault-name "$KEY_VAULT_NAME" \
+            --name "$CALLBACK_SECRET_NAME" \
+            --value "$callback_url" \
+            --output none \
+            --only-show-errors
+          echo "Signed callback URL rotated in Key Vault; its query signature was not printed."
+
+      - name: Activate the Python Durable Function package
+        shell: bash
+        run: |
+          set -euo pipefail
+          subscription_id="$(az account show --query id -o tsv)"
+          az functionapp restart --name "$FUNCTION_APP_NAME" --resource-group "$RESOURCE_GROUP" --only-show-errors
+          az rest --method post \
+            --url "https://management.azure.com/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${FUNCTION_APP_NAME}/syncfunctiontriggers?api-version=2022-03-01" \
+            --only-show-errors
+          echo "Python package activated and Blob/Durable triggers re-synced."
+
+      - name: Verify the Python Durable functions are loaded
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="DocumentBlobStarter DocumentOrchestrator ReconcileStaleDocuments"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            functions="$(az functionapp function list --name "$FUNCTION_APP_NAME" --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv --only-show-errors 2>/dev/null || true)"
+            missing=""
+            for function_name in $expected; do
+              echo "$functions" | grep -qi "$function_name" || missing="$missing $function_name"
+            done
+            if [ -z "$missing" ]; then
+              echo "Python Durable functions loaded."
+              exit 0
+            fi
+            echo "Attempt $attempt: still missing:$missing (waiting 30s)"
+            sleep 30
+          done
+          echo "::error::Expected Python Durable functions never appeared after package activation:$missing"
+          exit 1
+
+  summary:
+    name: Deployment summary
+    needs: [infra, deploy-code]
+    if: always() && needs.infra.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download deployment result
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: deployment-result
+
+      - name: Write the job summary
+        shell: pwsh
+        env:
+          CODE_DEPLOY_RESULT: ${{ needs.deploy-code.result }}
+          CODE_DEPLOY_REQUESTED: ${{ inputs.deploy_application_code }}
+        run: |
+          $result = Get-Content -Raw deployment-result.json | ConvertFrom-Json
+          $o = $result.properties.outputs
+
+          $codeState = switch ($env:CODE_DEPLOY_RESULT) {
+            'success' { '**Deployed.** Function and Logic App code are published and were verified as loaded.' }
+            'skipped' { '**NOT DEPLOYED.** `deploy_application_code` was false, so only the platform exists. Nothing will process a document until the code-deploy job is run.' }
+            default   { '**NOT DEPLOYED.** The code-deploy job did not succeed (result: ' + $env:CODE_DEPLOY_RESULT + '). The platform exists but the pipeline is NOT operational -- do not treat this deployment as complete.' }
+          }
+
+          $cmkState = if ($o.documentIntelligenceCustomerManagedKeyApplied.value -eq $true) {
+            'Customer-managed key applied.'
+          } else {
+            'Microsoft-managed keys. Document Intelligence cannot be created with CMK enabled; re-run this workflow with `enableDocumentIntelligenceCmk = true` in the parameter file to complete the CMK second pass.'
+          }
+
+          @"
+          ## Deployment: $($result.name)
+
+          | Output | Value |
+          |---|---|
+          | Resource group | $($o.resourceGroupName.value) |
+          | SQL server FQDN | $($o.sqlServerFqdn.value) |
+          | Function App | $($o.functionAppName.value) ($($o.functionAppDefaultHostname.value)) |
+          | Logic App | $($o.logicAppName.value) ($($o.logicAppDefaultHostname.value)) |
+          | Deployment artifacts | $($o.deploymentArtifactsStorageAccountName.value)/$($o.deploymentArtifactsContainerName.value) |
+          | Key Vault resource ID | $($o.keyVaultResourceId.value) |
+          | Log Analytics workspace | $($o.logAnalyticsWorkspaceResourceId.value) |
+          | Office 365 connection resource ID | $($o.office365ConnectionResourceId.value) |
+          | Document Intelligence encryption | $cmkState |
+
+          ### Application code
+          $codeState
+
+          ### Required manual follow-up (see docs/runbook.md)
+          1. Apply SQL migrations in ``sql/migrations/`` against the database above (Entra-only auth; connect as a member of the SQL admin Entra group), then run ``scripts/post-deploy.ps1`` to create the contained database users and grant least privilege.
+          2. Complete interactive OAuth consent for the Office 365 Outlook API connection (portal -> the connection resource above -> "Edit API connection" -> Authorize). The Logic App's system-assigned identity already holds the connection access policy this deployment created, but the connection itself stays unauthenticated until a human signs in, and every mail action fails until then.
+          3. If ``sharePointArchive.enabled`` is true, run ``scripts/grant-graph-permissions.ps1`` to grant the Logic App's managed identity the documented Microsoft Graph application permissions (requires a Global Administrator or Privileged Role Administrator).
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Fail the run when the platform deployed but the code did not
+        if: needs.deploy-code.result != 'success'
+        run: |
+          echo "::error::Infrastructure deployed, but application code was not published (deploy-code result: ${{ needs.deploy-code.result }}). The pipeline is not operational."
+          exit 1

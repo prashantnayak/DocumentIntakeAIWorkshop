@@ -1,0 +1,30 @@
+# CODEOWNERS for DocumentIntakeAIWorkshop
+#
+# These owners are placeholders. Replace the team handles below with the
+# actual GitHub teams/users responsible for this workload before first use.
+# Every PR that touches PHI-adjacent infrastructure, identity, or encryption
+# configuration must be reviewed by the platform/security owners.
+
+# Default owners for everything in the repo
+*                               @document-intake-ai/platform-engineering
+
+# Infrastructure-as-code requires platform + security sign-off
+/infra/                         @document-intake-ai/platform-engineering @document-intake-ai/security
+/bicepconfig.json               @document-intake-ai/platform-engineering
+
+# Application code
+/src/functions/                 @document-intake-ai/app-engineering
+/src/logicapps/                 @document-intake-ai/app-engineering
+
+# Data platform / PHI schema changes require data + security + privacy review
+/sql/                           @document-intake-ai/data-engineering @document-intake-ai/security @document-intake-ai/privacy-officer
+
+# CI/CD pipelines
+/.github/workflows/             @document-intake-ai/platform-engineering @document-intake-ai/security
+
+# Compliance and governance documentation
+/docs/COMPLIANCE.md             @document-intake-ai/security @document-intake-ai/privacy-officer
+/docs/ASSUMPTIONS.md            @document-intake-ai/platform-engineering
+
+# Bootstrap and deployment scripts (identity, federation, secrets handling)
+/scripts/                       @document-intake-ai/platform-engineering @document-intake-ai/security

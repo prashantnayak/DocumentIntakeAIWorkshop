@@ -1,0 +1,28 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "PYTHON_ISOLATE_WORKER_DEPENDENCIES": "1",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "ManagedIdentity__ClientId": "",
+    "PhiStorage__blobServiceUri": "https://account.blob.core.windows.net",
+    "PhiStorage__credential": "managedidentity",
+    "PhiStorage__clientId": "",
+    "PhiStorage__ContainerName": "documents",
+    "PhiStorage__IncomingPrefix": "incoming",
+    "PhiStorage__FailedPrefix": "failed",
+    "PhiStorage__WorkflowPayloadPrefix": "workflow-payloads",
+    "DocumentIntelligence__Endpoint": "https://resource.cognitiveservices.azure.com/",
+    "DocumentIntelligence__ExtractionModelId": "prebuilt-layout",
+    "DocumentIntelligence__ClassifierModelId": "",
+    "Sql__DataSource": "server.database.windows.net",
+    "Sql__InitialCatalog": "sqldb-intake",
+    "BusinessRulesWorkflowUrl": "",
+    "BusinessRules__ConfidenceThreshold": "0.85",
+    "BusinessRules__HighRiskDocumentTypesJson": "[\"Consent Form\",\"Advance Directive\",\"Prior Authorization\"]",
+    "BusinessRules__RequiredFieldsJson": "[\"PatientIdentifier\",\"DateOfService\",\"Provider\"]",
+    "BusinessRules__SasLinkExpiryHours": "72",
+    "ReconciliationSchedule": "0 */10 * * * *"
+  }
+}

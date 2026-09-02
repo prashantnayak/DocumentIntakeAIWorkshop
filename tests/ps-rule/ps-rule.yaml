@@ -1,0 +1,80 @@
+# PSRule for Azure configuration.
+# Analyzes infra/main.bicep (expanded with infra/params/dev.bicepparam)
+# against the Azure Well-Architected Framework rule set. Requires the Bicep
+# CLI on PATH (already required for infra validation) so PSRule.Rules.Azure
+# can expand the templates itself -- no separate ARM JSON export step needed.
+
+requires:
+  PSRule@core: '>=2.9.0'
+  PSRule.Rules.Azure: '>=1.47.0'
+
+input:
+  pathIgnore:
+    - 'src/**'
+    - 'sql/**'
+    - 'scripts/**'
+    - 'docs/**'
+    - '.github/**'
+    - 'tests/**'
+    - '**/*.md'
+    - 'infra/modules/**'
+    - 'infra/types/**'
+
+configuration:
+  AZURE_BICEP_FILE_EXPANSION: true
+  AZURE_BICEP_PARAMS_FILE_EXPANSION: true
+  AZURE_PARAMETER_FILE_EXPANSION: false
+
+binding:
+  preferTargetInfo: true
+
+execution:
+  duplicateResourceId: Warn
+  unresolvedRule: Warn
+
+output:
+  culture:
+    - en-US
+
+# ---------------------------------------------------------------------------
+# Documented, reviewed rule exclusions. Each is a platform limitation or an
+# upstream (pinned AVM module) characteristic, not something this
+# repository's own code can fix -- see the reason next to each rule. Full
+# rule exclusion (rather than a resource-name-scoped suppression) is used
+# because the generated resource names embed a uniqueString() suffix that
+# differs per subscription/deployment, so a name-scoped suppression would not
+# survive being deployed to a different subscription.
+# ---------------------------------------------------------------------------
+rule:
+  exclude:
+    # Log Analytics workspace replication is a newer, opt-in resiliency
+    # feature requiring a paired region and is not exposed as a parameter by
+    # the pinned avm/res/operational-insights/workspace:0.16.1 module. Out of
+    # scope for this single-region workshop environment.
+    - Azure.Log.Replication
+
+    # The pinned avm/res/key-vault/vault:0.14.0, avm/res/sql/server:0.22.0,
+    # and avm/res/web/connection:0.4.4 modules' own internal nested-deployment
+    # parameters ('keys', 'nonSecretParameterValues') are not declared
+    # @secure() inside those upstream, verified AVM modules themselves. This
+    # repository does not modify pinned registry module source, and no
+    # secret value is placed in these parameters by this repository's own
+    # module calls.
+    - Azure.Deployment.SecureParameter
+
+    # Logic Apps Standard's WS1 (Workflow Standard) plan tier does not
+    # support zone-redundant deployment -- there is no higher WS SKU tier
+    # that does. Documented, accepted platform limitation for this workload
+    # tier (see infra/modules/logic-app.bicep).
+    - Azure.AppService.AvailabilityZone
+
+    # sthost... is the shared Functions/Logic Apps host storage account.
+    # allowSharedKeyAccess=true there is a narrow, explicitly documented
+    # exception for the Azure Files content-share connection the Elastic
+    # Premium/Workflow Standard hosting model itself requires -- see the file
+    # header comment in infra/modules/storage-runtime.bicep and
+    # docs/COMPLIANCE.md. PHI storage (storage-phi.bicep) keeps
+    # allowSharedKeyAccess=false and is NOT covered by this exclusion in
+    # spirit -- it simply has no other Microsoft.Storage/storageAccounts
+    # resource in this workload with allowSharedKeyAccess=true to flag.
+    - Azure.Storage.LocalAuth
