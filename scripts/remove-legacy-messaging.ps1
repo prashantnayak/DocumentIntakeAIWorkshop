@@ -26,6 +26,10 @@ param(
 
     [Parameter(Mandatory)]
     [ValidateNotNullOrEmpty()]
+    [string] $EventGridEventSubscriptionName,
+
+    [Parameter(Mandatory)]
+    [ValidateNotNullOrEmpty()]
     [string] $EventGridIdentityName,
 
     [Parameter(Mandatory)]
@@ -62,6 +66,8 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($subscriptionId)) {
 }
 
 $baseId = "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName/providers"
+# Remove only the application subscription; Defender for Storage may share the
+# system topic through its StorageAntimalwareSubscription.
 $resources = @(
     @{
         Name = $LegacyFunctionAppName
@@ -76,8 +82,8 @@ $resources = @(
         Id = "$baseId/Microsoft.Web/serverfarms/$LegacyFunctionPlanName"
     },
     @{
-        Name = $EventGridSystemTopicName
-        Id = "$baseId/Microsoft.EventGrid/systemTopics/$EventGridSystemTopicName"
+        Name = $EventGridEventSubscriptionName
+        Id = "$baseId/Microsoft.EventGrid/systemTopics/$EventGridSystemTopicName/eventSubscriptions/$EventGridEventSubscriptionName"
     },
     @{
         Name = $ServiceBusNamespaceName

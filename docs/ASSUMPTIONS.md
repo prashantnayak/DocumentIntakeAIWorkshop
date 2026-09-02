@@ -75,12 +75,16 @@ results remain Function concerns because they are resolved before dispatch.
 - The deploy job publishes the versioned Logic App host first, rotates its
   signed business-rules callback into Key Vault, then activates and synchronizes
   the Python Function.
-- `functionIncomingPrefix` remains `incoming-v2` for parallel validation.
-  Producers are paused before switching it to `incoming`; only one generation
-  may own `incoming/`.
+- `functionIncomingPrefix` is `incoming` after the completed replacement
+  cutover. Use `incoming-v2` only for a future parallel validation; only one
+  generation may own `incoming/`.
 - Legacy cleanup occurs only after drain, no-active-run, and replacement-canary
   evidence. `scripts/remove-legacy-messaging.ps1` enforces these gates and exact
   resource names.
+- The Sweden Central cutover is complete. The old application Function, Logic
+  App, Service Bus namespace, and application Event Grid subscription are
+  absent. Defender for Storage's `StorageAntimalwareSubscription` is
+  platform-owned and remains on the shared system topic.
 
 ## Workshop exceptions
 

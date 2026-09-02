@@ -10,7 +10,7 @@ no event-delivery or broker tier.
 
 | # | Flow | Implementation |
 |---|---|---|
-| 1 | A producer writes to `documents/<incoming-prefix>/` in private PHI storage. During migration the prefix is `incoming-v2`; after cutover it is `incoming`. | `infra/modules/storage-phi.bicep` |
+| 1 | A producer writes to `documents/incoming/` in private PHI storage. A future parallel migration may temporarily use an isolated prefix such as `incoming-v2`. | `infra/modules/storage-phi.bicep` |
 | 2 | `PollIncomingDocuments` runs every minute, lists the configured prefix through the private Blob endpoint with the Function user-assigned identity, and isolates per-blob failures. It does not use the Blob trigger extension or a PHI queue; Durable state uses private `AzureWebJobsStorage`. | `src/functions/function_app.py`; `src/functions/intake/blob_service.py`; `infra/modules/function-app.bicep` |
 | 3 | Registration resolves and records the exact blob version ID and ETag in `dbo.ProcessingInbox`. Repeated polls return the existing `DocumentId`. | `src/functions/intake/registration_service.py`; `sql/migrations/003_processing_state.sql` |
 | 4 | A deterministic Durable instance receives only the `DocumentId`. An activity reloads the work item, downloads the registered version with an `IfNotModified` ETag condition, hashes it, and claims the hash atomically. | `DocumentOrchestrator`; `ProcessAndStage`; `blob_service.py`; `dbo.usp_ClaimDocumentHash` |

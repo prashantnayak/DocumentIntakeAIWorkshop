@@ -77,8 +77,8 @@ param phiStorageBlobServiceUri string
 @description('Name of the PHI document container.')
 param phiContainerName string
 
-@description('Blob prefix listed by the timer poller. Use incoming-v2 during parallel validation and incoming after cutover.')
-param phiIncomingPrefix string = 'incoming-v2'
+@description('Blob prefix listed by the timer poller. The active deployment uses incoming; override with an isolated prefix only during a parallel migration.')
+param phiIncomingPrefix string = 'incoming'
 
 @description('Versionless Key Vault URI, including the trailing slash.')
 param keyVaultUri string

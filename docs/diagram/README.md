@@ -6,7 +6,7 @@ show the same Python Durable design.
 
 ```mermaid
 flowchart TB
-    Producer[Document producer] -->|write to active prefix| Phi[(Private PHI Blob Storage<br/>documents/incoming-v2 during validation<br/>documents/incoming after cutover)]
+    Producer[Document producer] -->|write to active prefix| Phi[(Private PHI Blob Storage<br/>documents/incoming)]
 
     subgraph PrivateAzure["Sweden Central · rg-intakeai-dev-swc · private network"]
         Phi -->|timer polling via Blob SDK| Starter[PollIncomingDocuments<br/>Python 3.12]

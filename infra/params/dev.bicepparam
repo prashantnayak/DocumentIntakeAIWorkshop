@@ -55,7 +55,7 @@ param deploymentArtifactsContainerName = 'deployment-artifacts'
 param deploymentArtifactsPublisherObjectId = ''
 
 // --- Durable Blob intake ---
-param functionIncomingPrefix = 'incoming-v2'
+param functionIncomingPrefix = 'incoming'
 param businessRulesCallbackSecretName = 'logic-business-rules-callback'
 
 // --- Document Intelligence ---

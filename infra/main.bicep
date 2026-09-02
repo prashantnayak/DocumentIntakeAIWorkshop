@@ -142,8 +142,8 @@ param deploymentArtifactsPublisherPrincipalType string = 'ServicePrincipal'
 // Durable Blob intake
 // ---------------------------------------------------------------------------
 
-@description('Blob prefix polled by the Python Durable Blob trigger. Keep incoming-v2 during parallel validation, then switch to incoming at cutover.')
-param functionIncomingPrefix string = 'incoming-v2'
+@description('Blob prefix polled by the Python Durable Blob trigger. The active deployment uses incoming; override with an isolated prefix only during a parallel migration.')
+param functionIncomingPrefix string = 'incoming'
 
 @description('Versionless Key Vault secret name used to hold the signed business-rules Logic App callback URL.')
 param businessRulesCallbackSecretName string = 'logic-business-rules-callback'

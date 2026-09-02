@@ -116,7 +116,7 @@ the repository's synthetic fixtures to the VM, sign in with `az login`, and use
 Entra authentication:
 
 ```powershell
-$prefix = 'incoming-v2' # use 'incoming' only after cutover
+$prefix = 'incoming'
 az storage blob upload `
   --auth-mode login `
   --account-name <phi-storage-account> `
@@ -146,7 +146,7 @@ Never test with real PHI.
 
 ## Safe `incoming-v2` to `incoming` cutover
 
-1. Keep the replacement at `incoming-v2` while both synthetic paths and
+1. Override the replacement to `incoming-v2` while both synthetic paths and
    recovery checks are validated.
 2. Pause every producer.
 3. Confirm the previous generation is drained, has no active runs, and cannot

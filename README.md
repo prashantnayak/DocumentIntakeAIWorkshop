@@ -37,8 +37,8 @@ queue. Durable state remains in private `AzureWebJobsStorage`.
 
 ## How processing works
 
-1. `PollIncomingDocuments` lists `documents/incoming-v2/` every minute during
-   migration validation, using the Function managed identity.
+1. `PollIncomingDocuments` lists `documents/incoming/` every minute, using the
+   Function managed identity.
 2. The poller registers the storage account, container, blob name,
    immutable version ID, and ETag in `dbo.ProcessingInbox`. A deterministic
    Durable instance starts with only the `DocumentId`.
@@ -99,8 +99,13 @@ See [architecture](docs/architecture.md) and the
 
 ## Safe intake cutover
 
-`infra/params/dev.bicepparam` intentionally starts the replacement trigger at
-`incoming-v2`. Do not point two generations at `incoming/`.
+`infra/params/dev.bicepparam` now points the replacement trigger at `incoming`.
+The Sweden Central environment has completed this cutover: the legacy
+application Function, Logic App, Service Bus namespace, and Blob-to-Service-Bus
+Event Grid subscription are removed. Defender for Storage's platform-managed
+Event Grid subscription remains intentionally.
+For a parallel migration in another environment, initially override it to
+`incoming-v2`; never point two generations at `incoming/`.
 
 1. Deploy the replacement stack with `functionIncomingPrefix='incoming-v2'`.
 2. From the private test VM, upload both synthetic fixtures to
@@ -124,7 +129,7 @@ See [architecture](docs/architecture.md) and the
 
 Rollback before cleanup by pausing producers, restoring the replacement prefix
 to `incoming-v2`, and reactivating the prior generation. After cleanup, rollback
-requires redeploying that generation; retain deployment records until sign-off.
+requires redeploying that generation from retained deployment records.
 
 ## Test from the private Windows VM
 
@@ -144,7 +149,7 @@ az storage blob upload `
   --auth-mode login `
   --account-name <phi-storage-account> `
   --container-name documents `
-  --name incoming-v2/sample-intake-document.pdf `
+  --name incoming/sample-intake-document.pdf `
   --file .\tests\fixtures\sample-intake-document.pdf
 ```
 
