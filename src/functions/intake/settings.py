@@ -36,6 +36,16 @@ class Settings:
         .strip("/")
         + "/"
     )
+    polling_batch_size: int = field(
+        default_factory=lambda: max(
+            1, min(1000, int(_setting("IntakePollingBatchSize", "100")))
+        )
+    )
+    reconciliation_stale_minutes: int = field(
+        default_factory=lambda: max(
+            5, int(_setting("ReconciliationStaleMinutes", "15"))
+        )
+    )
     failed_prefix: str = field(
         default_factory=lambda: _setting("PhiStorage__FailedPrefix", "failed")
         .strip("/")

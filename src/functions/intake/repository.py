@@ -3,6 +3,7 @@ from __future__ import annotations
 import struct
 import uuid
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from azure.core.credentials import TokenCredential
@@ -59,9 +60,11 @@ class SqlProcessingRepository:
         database: str,
         credential: TokenCredential,
         connect: Callable[..., Any] | None = None,
+        stale_after_minutes: int = 15,
     ) -> None:
         self._credential = credential
         self._connect = connect or self._default_connect
+        self._stale_after_minutes = stale_after_minutes
         self._connection_string = (
             "DRIVER={ODBC Driver 18 for SQL Server};"
             f"SERVER=tcp:{server},1433;DATABASE={database};"
@@ -222,7 +225,13 @@ class SqlProcessingRepository:
         return str(value_from_row(row, "State", "Pending"))
 
     def find_stale_items(self) -> list[str]:
-        rows = self._execute_all("EXEC dbo.usp_FindStaleProcessingItems", ())
+        older_than = datetime.now(UTC) - timedelta(
+            minutes=self._stale_after_minutes
+        )
+        rows = self._execute_all(
+            "EXEC dbo.usp_FindStaleProcessingItems @OlderThanUtc=?",
+            (older_than,),
+        )
         return [
             normalize_document_id(value_from_row(row, "DocumentId")) for row in rows
         ]

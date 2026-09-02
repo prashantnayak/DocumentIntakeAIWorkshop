@@ -9,7 +9,7 @@ flowchart TB
     Producer[Document producer] -->|write to active prefix| Phi[(Private PHI Blob Storage<br/>documents/incoming-v2 during validation<br/>documents/incoming after cutover)]
 
     subgraph PrivateAzure["Sweden Central · rg-intakeai-dev-swc · private network"]
-        Phi -->|identity-based polling trigger| Starter[DocumentBlobStarter<br/>Python 3.12]
+        Phi -->|timer polling via Blob SDK| Starter[PollIncomingDocuments<br/>Python 3.12]
         Starter -->|version ID + ETag| Inbox[(Azure SQL<br/>ProcessingInbox)]
         Starter --> Durable[Durable Functions<br/>DocumentOrchestrator · Linux EP1]
 
@@ -39,7 +39,7 @@ flowchart TB
         Durable -->|durable SQL status polling| Inbox
         Durable -->|FinalizeSource<br/>delete only matching version + ETag| Phi
         Reconcile[Reconciliation timer] -->|restart stale nonterminal item| Durable
-        Poison[(Runtime storage<br/>webjobs-blobtrigger-poison)] -. repeated trigger failure .- Starter
+        Runtime[(Runtime storage<br/>Durable Blob + Queue + Table)] --- Durable
 
         Monitor[Azure Monitor<br/>Log Analytics + App Insights + alerts] --- Durable
         Monitor --- Rules

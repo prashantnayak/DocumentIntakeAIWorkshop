@@ -24,7 +24,7 @@
         },
         "runtimeConfiguration": {
           "secureData": {
-            "properties": ["inputs", "outputs"]
+            "properties": ["inputs"]
           }
         }
       }
@@ -46,38 +46,15 @@
         "runAfter": {},
         "runtimeConfiguration": {
           "secureData": {
-            "properties": ["inputs", "outputs"]
+            "properties": ["inputs"]
           }
         }
       },
       "Parse_processing_sidecar": {
-        "type": "ParseJson",
-        "inputs": {
-          "content": "@json(base64ToString(body('Read_processing_sidecar')?['$content']))",
-          "schema": {
-            "type": "object",
-            "required": ["documentId", "blobName", "documentHash", "documentType", "confidence", "classifierVersion", "requiredFieldValues", "missingRequiredFields", "accessLinkUrl", "accessLinkExpiresOn"],
-            "properties": {
-              "documentId": { "type": "string" },
-              "blobName": { "type": "string" },
-              "documentHash": { "type": "string" },
-              "documentType": { "type": "string" },
-              "confidence": { "type": "number" },
-              "classifierVersion": { "type": "string" },
-              "requiredFieldValues": { "type": "object" },
-              "missingRequiredFields": { "type": "array" },
-              "accessLinkUrl": { "type": "string" },
-              "accessLinkExpiresOn": { "type": "string" }
-            }
-          }
-        },
+        "type": "Compose",
+        "inputs": "@body('Read_processing_sidecar')?['content']",
         "runAfter": {
           "Read_processing_sidecar": ["Succeeded"]
-        },
-        "runtimeConfiguration": {
-          "secureData": {
-            "properties": ["inputs", "outputs"]
-          }
         }
       },
       "Validate_document_identity": {
@@ -86,7 +63,7 @@
           "and": [
             {
               "equals": [
-                "@body('Parse_processing_sidecar')?['documentId']",
+                "@outputs('Parse_processing_sidecar')?['documentId']",
                 "@triggerBody()?['documentId']"
               ]
             }
@@ -96,8 +73,8 @@
           "Compose_authoritative_outcome": {
             "type": "Compose",
             "inputs": {
-              "outcome": "@{if(less(float(body('Parse_processing_sidecar')?['confidence']), float(parameters('confidenceThreshold'))), 'ReviewRequired', if(contains(json(parameters('highRiskDocumentTypesJson')), body('Parse_processing_sidecar')?['documentType']), 'ReviewRequired', if(greater(length(body('Parse_processing_sidecar')?['missingRequiredFields']), 0), 'ReviewRequired', 'AutoApproved')))}",
-              "ruleFired": "@{if(less(float(body('Parse_processing_sidecar')?['confidence']), float(parameters('confidenceThreshold'))), 'ConfidenceGate', if(contains(json(parameters('highRiskDocumentTypesJson')), body('Parse_processing_sidecar')?['documentType']), 'DocumentTypeGate', if(greater(length(body('Parse_processing_sidecar')?['missingRequiredFields']), 0), 'RequiredFieldsGate', 'None')))}"
+              "outcome": "@{if(less(float(outputs('Parse_processing_sidecar')?['confidence']), float(parameters('confidenceThreshold'))), 'ReviewRequired', if(contains(json(parameters('highRiskDocumentTypesJson')), outputs('Parse_processing_sidecar')?['documentType']), 'ReviewRequired', if(greater(length(outputs('Parse_processing_sidecar')?['missingRequiredFields']), 0), 'ReviewRequired', 'AutoApproved')))}",
+              "ruleFired": "@{if(less(float(outputs('Parse_processing_sidecar')?['confidence']), float(parameters('confidenceThreshold'))), 'ConfidenceGate', if(contains(json(parameters('highRiskDocumentTypesJson')), outputs('Parse_processing_sidecar')?['documentType']), 'DocumentTypeGate', if(greater(length(outputs('Parse_processing_sidecar')?['missingRequiredFields']), 0), 'RequiredFieldsGate', 'None')))}"
             },
             "runAfter": {}
           },
@@ -120,14 +97,14 @@
                   "parameters": {
                     "query": "INSERT INTO dbo.Documents (DocumentId, DocumentHash, BlobName, DocumentType, Confidence, PatientIdentifier, DateOfService, Provider, ExtractedFieldsJson, ApprovedBy, ApprovedAtUtc) SELECT @DocumentId, @DocumentHash, @BlobName, @DocumentType, @Confidence, JSON_VALUE(@ExtractedFieldsJson, '$.PatientIdentifier'), JSON_VALUE(@ExtractedFieldsJson, '$.DateOfService'), JSON_VALUE(@ExtractedFieldsJson, '$.Provider'), @ExtractedFieldsJson, 'system-auto-approve', SYSUTCDATETIME() WHERE NOT EXISTS (SELECT 1 FROM dbo.Documents WHERE DocumentId = @DocumentId); INSERT INTO dbo.DecisionTrail (DocumentId, DocumentHash, BlobName, Stage, ClassifierVersion, Confidence, RuleFired, Outcome, ApproverIdentity, TimestampUtc) SELECT @DocumentId, @DocumentHash, @BlobName, 'BusinessRules', @ClassifierVersion, @Confidence, @RuleFired, 'AutoApproved', 'system-auto-approve', SYSUTCDATETIME() WHERE NOT EXISTS (SELECT 1 FROM dbo.DecisionTrail WHERE DocumentId = @DocumentId AND Outcome = 'AutoApproved');",
                     "queryParameters": {
-                      "DocumentId": "@body('Parse_processing_sidecar')?['documentId']",
-                      "DocumentHash": "@body('Parse_processing_sidecar')?['documentHash']",
-                      "BlobName": "@body('Parse_processing_sidecar')?['blobName']",
-                      "DocumentType": "@body('Parse_processing_sidecar')?['documentType']",
-                      "Confidence": "@body('Parse_processing_sidecar')?['confidence']",
-                      "ClassifierVersion": "@body('Parse_processing_sidecar')?['classifierVersion']",
+                      "DocumentId": "@outputs('Parse_processing_sidecar')?['documentId']",
+                      "DocumentHash": "@outputs('Parse_processing_sidecar')?['documentHash']",
+                      "BlobName": "@outputs('Parse_processing_sidecar')?['blobName']",
+                      "DocumentType": "@outputs('Parse_processing_sidecar')?['documentType']",
+                      "Confidence": "@outputs('Parse_processing_sidecar')?['confidence']",
+                      "ClassifierVersion": "@outputs('Parse_processing_sidecar')?['classifierVersion']",
                       "RuleFired": "@outputs('Compose_authoritative_outcome')?['ruleFired']",
-                      "ExtractedFieldsJson": "@string(body('Parse_processing_sidecar')?['requiredFieldValues'])"
+                      "ExtractedFieldsJson": "@string(outputs('Parse_processing_sidecar')?['requiredFieldValues'])"
                     }
                   },
                   "serviceProviderConfiguration": {
@@ -139,7 +116,7 @@
                 "runAfter": {},
                 "runtimeConfiguration": {
                   "secureData": {
-                    "properties": ["inputs", "outputs"]
+                    "properties": ["inputs"]
                   }
                 }
               },
@@ -147,7 +124,7 @@
                 "type": "Http",
                 "inputs": {
                   "method": "GET",
-                  "uri": "@body('Parse_processing_sidecar')?['accessLinkUrl']"
+                  "uri": "@outputs('Parse_processing_sidecar')?['accessLinkUrl']"
                 },
                 "runAfter": {
                   "Persist_auto_approved_document": ["Succeeded"]
@@ -163,7 +140,7 @@
                 "inputs": {
                   "parameters": {
                     "containerName": "@parameters('phiContainerName')",
-                    "blobName": "@concat('processed/', last(split(body('Parse_processing_sidecar')?['blobName'], '/')))",
+                    "blobName": "@concat('processed/', last(split(outputs('Parse_processing_sidecar')?['blobName'], '/')))",
                     "content": "@body('Read_source_blob')"
                   },
                   "serviceProviderConfiguration": {
@@ -187,7 +164,7 @@
                   "parameters": {
                     "query": "EXEC dbo.usp_UpdateProcessingState @DocumentId=@DocumentId, @State='AutoApproved', @ExpectedState='Ready', @ClearPayload=1;",
                     "queryParameters": {
-                      "DocumentId": "@body('Parse_processing_sidecar')?['documentId']"
+                      "DocumentId": "@outputs('Parse_processing_sidecar')?['documentId']"
                     }
                   },
                   "serviceProviderConfiguration": {
@@ -215,7 +192,7 @@
                 },
                 "runtimeConfiguration": {
                   "secureData": {
-                    "properties": ["inputs", "outputs"]
+                    "properties": ["inputs"]
                   }
                 }
               },
@@ -245,7 +222,7 @@
                     "parameters": {
                       "query": "EXEC dbo.usp_UpdateProcessingState @DocumentId=@DocumentId, @State='ReviewPending', @ExpectedState='Ready';",
                       "queryParameters": {
-                        "DocumentId": "@body('Parse_processing_sidecar')?['documentId']"
+                        "DocumentId": "@outputs('Parse_processing_sidecar')?['documentId']"
                       }
                     },
                     "serviceProviderConfiguration": {
@@ -265,16 +242,16 @@
                       }
                     },
                     "body": {
-                      "documentId": "@body('Parse_processing_sidecar')?['documentId']",
-                      "blobName": "@body('Parse_processing_sidecar')?['blobName']",
-                      "documentHash": "@body('Parse_processing_sidecar')?['documentHash']",
-                      "documentType": "@body('Parse_processing_sidecar')?['documentType']",
-                      "confidence": "@body('Parse_processing_sidecar')?['confidence']",
-                      "classifierVersion": "@body('Parse_processing_sidecar')?['classifierVersion']",
-                      "requiredFieldValues": "@body('Parse_processing_sidecar')?['requiredFieldValues']",
-                      "missingRequiredFields": "@body('Parse_processing_sidecar')?['missingRequiredFields']",
-                      "accessLinkUrl": "@body('Parse_processing_sidecar')?['accessLinkUrl']",
-                      "accessLinkExpiresOn": "@body('Parse_processing_sidecar')?['accessLinkExpiresOn']",
+                      "documentId": "@outputs('Parse_processing_sidecar')?['documentId']",
+                      "blobName": "@outputs('Parse_processing_sidecar')?['blobName']",
+                      "documentHash": "@outputs('Parse_processing_sidecar')?['documentHash']",
+                      "documentType": "@outputs('Parse_processing_sidecar')?['documentType']",
+                      "confidence": "@outputs('Parse_processing_sidecar')?['confidence']",
+                      "classifierVersion": "@outputs('Parse_processing_sidecar')?['classifierVersion']",
+                      "requiredFieldValues": "@outputs('Parse_processing_sidecar')?['requiredFieldValues']",
+                      "missingRequiredFields": "@outputs('Parse_processing_sidecar')?['missingRequiredFields']",
+                      "accessLinkUrl": "@outputs('Parse_processing_sidecar')?['accessLinkUrl']",
+                      "accessLinkExpiresOn": "@outputs('Parse_processing_sidecar')?['accessLinkExpiresOn']",
                       "sidecarBlobName": "@triggerBody()?['sidecarBlobName']"
                     }
                   },

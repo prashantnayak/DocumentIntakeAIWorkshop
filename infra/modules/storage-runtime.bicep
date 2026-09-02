@@ -6,19 +6,16 @@
 // NARROW, DOCUMENTED EXCEPTION: Azure Functions Elastic Premium and Logic
 // Apps Standard both require an Azure Files content share
 // (WEBSITE_CONTENTAZUREFILECONNECTIONSTRING/WEBSITE_CONTENTSHARE) for
-// scale-controller coordination. That content-share connection is only
-// supported over the Azure Files REST/SMB protocol using an account key
-// connection string -- there is no managed-identity path for the content
-// share itself (see docs/COMPLIANCE.md and docs/ASSUMPTIONS.md). Therefore,
-// and ONLY for this isolated runtime storage account, allowSharedKeyAccess
-// is left enabled. AzureWebJobsStorage (blob/queue/table trigger and binding
-// state) still authenticates with the Function/Logic App managed identities
-// via storageAccountUseIdentityAuthentication in function-app.bicep and
-// logic-app.bicep -- the account key is used for the content share only, is
-// never written to source control, and is resolved at deploy time with
-// listKeys() directly inside the consuming app's appSettings.
+// scale-controller coordination. Logic Apps Standard's workflow-state
+// provider also requires a classic AzureWebJobsStorage connection string and
+// fails when only identity-based host settings are supplied. Therefore, and
+// ONLY for this isolated non-PHI runtime storage account, allowSharedKeyAccess
+// is left enabled. The Python Function continues to use managed identity for
+// AzureWebJobsStorage, and all application data connections remain
+// identity-based. Account keys are never written to source control or exposed
+// as outputs; consuming resources resolve them at deployment time.
 metadata name = 'storage-runtime'
-metadata description = 'Opinionated wrapper over AVM storage-account for Functions + Logic Apps host storage, with a documented Shared Key exception for the content share only.'
+metadata description = 'Opinionated wrapper over AVM storage-account for Functions + Logic Apps host storage, with a documented Shared Key exception for platform-required Logic App host storage and content shares.'
 
 @description('Storage account resource name (already validated to be <=24 lowercase alphanumeric characters by the caller).')
 param name string
@@ -59,7 +56,7 @@ param functionIdentityPrincipalId string
 @description('Principal ID of the Logic App USER-ASSIGNED identity, granted the data-plane roles required for identity-based AzureWebJobsStorage access. This is distinct from the Logic App system-assigned identity used by the workflow-level built-in Blob connector.')
 param logicAppIdentityPrincipalId string
 
-@description('Name of the private container holding application deployment packages (function-app/current.zip, logic-app/current.zip). Never holds PHI -- only build artifacts.')
+@description('Name of the private container holding SHA-256-addressed application deployment packages. Never holds PHI -- only build artifacts.')
 param deploymentArtifactsContainerName string
 
 @description('Object ID of the CI/CD deployment principal that publishes application packages into the deployment-artifacts container. Leave empty to skip the grant (for example when packages are published manually by an already-privileged operator).')

@@ -8,11 +8,10 @@ This file records the current deployment contract, not superseded designs.
   `rg-intakeai-dev-swc`, at fewer than 1,000 documents per day.
 - PHI storage uses one private `documents` container with `incoming/`,
   `processed/`, `failed/`, and private workflow-sidecar prefixes.
-- Intake is an identity-based polling Blob trigger. The custom `PhiStorage`
-  connection supplies only `blobServiceUri`, `credential`, and `clientId`; it
-  does not configure a PHI-storage queue endpoint. Checkpoints and poison
-  notifications use private `AzureWebJobsStorage`, which has a Queue private
-  endpoint and grants the Function identity Storage Queue Data Contributor.
+- Intake is an identity-based timer poller. It uses the Blob SDK and the
+  Function application identity to list the private incoming prefix directly.
+  It does not use the Blob trigger extension or a PHI queue. Durable state uses
+  private `AzureWebJobsStorage`.
 - The Function is Python 3.12 Durable Functions on Linux Elastic Premium `EP1`.
 - SQL `ProcessingInbox` is the cross-service processing source of truth.
   Durable history contains only identifiers and state.

@@ -20,6 +20,9 @@ class FakeCursor:
     def fetchone(self) -> tuple[object, ...]:
         return self.result
 
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return [self.result]
+
 
 class FakeConnection:
     def __init__(self, cursor: FakeCursor) -> None:
@@ -68,3 +71,22 @@ def test_register_uses_token_and_parameterized_stored_procedure() -> None:
     assert "PWD=" not in calls[0]["connection_string"]
     assert connection.committed and connection.closed
 
+
+def test_stale_lookup_passes_required_cutoff() -> None:
+    document_id = uuid.uuid4()
+    cursor = FakeCursor((document_id,), ("DocumentId",))
+    connection = FakeConnection(cursor)
+    credential = SimpleNamespace(
+        get_token=lambda scope: SimpleNamespace(token="entra-token")
+    )
+    repository = SqlProcessingRepository(
+        "server.database.windows.net",
+        "database",
+        credential,
+        lambda *args, **kwargs: connection,
+        stale_after_minutes=15,
+    )
+
+    assert repository.find_stale_items() == [str(document_id)]
+    assert "@OlderThanUtc=?" in cursor.sql
+    assert len(cursor.parameters) == 1

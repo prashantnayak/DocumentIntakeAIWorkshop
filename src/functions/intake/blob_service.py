@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from itertools import islice
 from typing import Any
+from urllib.parse import urlencode
 
 from azure.core import MatchConditions
 from azure.core.credentials import TokenCredential
@@ -34,6 +36,12 @@ class PhiBlobService:
         self._failed_prefix = failed_prefix
         self._payload_prefix = payload_prefix
         self._sas_expiry_hours = sas_expiry_hours
+
+    def list_blob_names(self, prefix: str, max_results: int) -> tuple[str, ...]:
+        blobs = self._client.get_container_client(self._container_name).list_blobs(
+            name_starts_with=prefix
+        )
+        return tuple(item.name for item in islice(blobs, max_results))
 
     def resolve_identity(self, blob_name: str) -> BlobIdentity:
         blob_client = self._client.get_blob_client(self._container_name, blob_name)
@@ -102,8 +110,8 @@ class PhiBlobService:
             item.source_blob_name,
             version_id=item.source_version_id,
         )
-        blob_url = blob.url.split("?", 1)[0]
-        return f"{blob_url}?{query}", expires_on.isoformat()
+        version_query = urlencode({"versionid": item.source_version_id})
+        return f"{blob.url}?{version_query}&{query}", expires_on.isoformat()
 
     def write_workflow_payload(
         self, document_id: str, payload: dict[str, Any]

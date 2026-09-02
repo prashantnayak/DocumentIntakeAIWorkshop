@@ -25,11 +25,11 @@ name: Deploy
 # See README.md -> "Self-hosted runner requirements".
 #
 # WHAT THE CODE-DEPLOY JOB ACTUALLY DOES
-#   * Function App    - uploads function-python/current.zip to the private
-#                       deployment-artifacts container, then restarts the app.
-#                       The app pulls the package itself with its user-assigned
-#                       managed identity (WEBSITE_RUN_FROM_PACKAGE points at
-#                       that stable blob URL and
+#   * Function App    - uploads a SHA-256-addressed package to the private
+#                       deployment-artifacts container, points the app at that
+#                       immutable URL, then restarts the app. The app pulls the
+#                       package itself with its user-assigned managed identity
+#                       (and
 #                       WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID names the
 #                       identity), so no SCM access is needed for Functions.
 #   * Logic App Std   - Logic Apps Standard does not support running from an
@@ -73,6 +73,9 @@ jobs:
   build-packages:
     name: Build deployment packages
     runs-on: ubuntu-latest
+    outputs:
+      function-package-sha256: ${{ steps.package-hashes.outputs.function-package-sha256 }}
+      logic-package-sha256: ${{ steps.package-hashes.outputs.logic-package-sha256 }}
     env:
       CONFIRM_INPUT: ${{ inputs.confirm }}
     steps:
@@ -133,7 +136,15 @@ jobs:
           set -euo pipefail
           unzip -l packages/function-app.zip | grep -q ' host.json$' || { echo "::error::function-app.zip is missing host.json at its root."; exit 1; }
           unzip -l packages/logic-app.zip | grep -q ' host.json$' || { echo "::error::logic-app.zip is missing host.json at its root."; exit 1; }
-          unzip -l packages/logic-app.zip | grep -q 'workflows/business-rules-workflow/workflow.json$' || { echo "::error::logic-app.zip is missing the workflow definitions."; exit 1; }
+          unzip -l packages/logic-app.zip | grep -q 'business-rules-workflow/workflow.json$' || { echo "::error::logic-app.zip is missing the workflow definitions."; exit 1; }
+
+      - name: Record immutable package hashes
+        id: package-hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "function-package-sha256=$(sha256sum packages/function-app.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "logic-package-sha256=$(sha256sum packages/logic-app.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Upload packages
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -171,6 +182,7 @@ jobs:
       # parsing ambiguity and follows GitHub's documented guidance for
       # safely handling user-supplied workflow_dispatch input.
       TARGET_ENVIRONMENT: ${{ inputs.environment }}
+      FUNCTION_PACKAGE_SHA256: ${{ needs.build-packages.outputs.function-package-sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -199,7 +211,8 @@ jobs:
             '--location', 'swedencentral',
             '--template-file', 'infra/main.bicep',
             '--parameters', "infra/params/$($env:TARGET_ENVIRONMENT).bicepparam",
-            '--no-pretty-print'
+             '--parameters', "functionPackageBlobName=function-app/$($env:FUNCTION_PACKAGE_SHA256).zip",
+             '--no-pretty-print'
           )
           & az @baseArgs @extraArgs
           if ($LASTEXITCODE -ne 0) { throw 'what-if failed -- aborting before any resource is created.' }
@@ -223,7 +236,8 @@ jobs:
             '--location', 'swedencentral',
             '--name', $deploymentName,
             '--template-file', 'infra/main.bicep',
-            '--parameters', "infra/params/$($env:TARGET_ENVIRONMENT).bicepparam"
+            '--parameters', "infra/params/$($env:TARGET_ENVIRONMENT).bicepparam",
+            '--parameters', "functionPackageBlobName=function-app/$($env:FUNCTION_PACKAGE_SHA256).zip"
           )
           & az @baseArgs @extraArgs -o json | Tee-Object -FilePath deployment-result.json
           if ($LASTEXITCODE -ne 0) { throw "az deployment sub create failed for deployment '$deploymentName'." }
@@ -270,6 +284,8 @@ jobs:
       ARTIFACTS_CONTAINER: ${{ needs.infra.outputs.artifacts-container }}
       KEY_VAULT_NAME: ${{ needs.infra.outputs.key-vault-name }}
       CALLBACK_SECRET_NAME: ${{ needs.infra.outputs.callback-secret-name }}
+      EXPECTED_FUNCTION_PACKAGE_SHA256: ${{ needs.build-packages.outputs.function-package-sha256 }}
+      EXPECTED_LOGIC_PACKAGE_SHA256: ${{ needs.build-packages.outputs.logic-package-sha256 }}
     steps:
       - name: Download packages
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -307,22 +323,43 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          az storage blob upload \
-            --auth-mode login \
-            --account-name "$ARTIFACTS_ACCOUNT" \
-            --container-name "$ARTIFACTS_CONTAINER" \
-            --name "function-python/current.zip" \
-            --file packages/function-app.zip \
-            --overwrite true \
-            --only-show-errors
-          az storage blob upload \
-            --auth-mode login \
-            --account-name "$ARTIFACTS_ACCOUNT" \
-            --container-name "$ARTIFACTS_CONTAINER" \
-            --name "logic-app/current.zip" \
-            --file packages/logic-app.zip \
-            --overwrite true \
-            --only-show-errors
+          function_sha="$(sha256sum packages/function-app.zip | awk '{print $1}')"
+          logic_sha="$(sha256sum packages/logic-app.zip | awk '{print $1}')"
+          if [ "$function_sha" != "$EXPECTED_FUNCTION_PACKAGE_SHA256" ] || [ "$logic_sha" != "$EXPECTED_LOGIC_PACKAGE_SHA256" ]; then
+            echo "::error::Downloaded package hashes do not match the artifacts built by this workflow run."
+            exit 1
+          fi
+          function_blob="function-app/${function_sha}.zip"
+          logic_blob="logic-app/${logic_sha}.zip"
+
+          publish_if_missing() {
+            local blob_name="$1"
+            local package_path="$2"
+            local exists
+            exists="$(az storage blob exists \
+              --auth-mode login \
+              --account-name "$ARTIFACTS_ACCOUNT" \
+              --container-name "$ARTIFACTS_CONTAINER" \
+              --name "$blob_name" \
+              --query exists -o tsv \
+              --only-show-errors)"
+            if [ "$exists" != "true" ]; then
+              az storage blob upload \
+                --auth-mode login \
+                --account-name "$ARTIFACTS_ACCOUNT" \
+                --container-name "$ARTIFACTS_CONTAINER" \
+                --name "$blob_name" \
+                --file "$package_path" \
+                --overwrite false \
+                --only-show-errors
+            fi
+          }
+
+          publish_if_missing "$function_blob" packages/function-app.zip
+          publish_if_missing "$logic_blob" packages/logic-app.zip
+          echo "FUNCTION_PACKAGE_URL=https://${ARTIFACTS_ACCOUNT}.blob.core.windows.net/${ARTIFACTS_CONTAINER}/${function_blob}" >> "$GITHUB_ENV"
+          echo "FUNCTION_PACKAGE_SHA256=${function_sha}" >> "$GITHUB_ENV"
+          echo "LOGIC_PACKAGE_SHA256=${logic_sha}" >> "$GITHUB_ENV"
           echo "Both packages published to https://${ARTIFACTS_ACCOUNT}.blob.core.windows.net/${ARTIFACTS_CONTAINER}/"
 
       - name: Publish the Logic Apps Standard workflows (zip deploy via private SCM)
@@ -384,17 +421,31 @@ jobs:
         run: |
           set -euo pipefail
           subscription_id="$(az account show --query id -o tsv)"
-          az functionapp restart --name "$FUNCTION_APP_NAME" --resource-group "$RESOURCE_GROUP" --only-show-errors
-          az rest --method post \
-            --url "https://management.azure.com/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${FUNCTION_APP_NAME}/syncfunctiontriggers?api-version=2022-03-01" \
+          az functionapp config appsettings set \
+            --name "$FUNCTION_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --settings "WEBSITE_RUN_FROM_PACKAGE=${FUNCTION_PACKAGE_URL}" \
+            --output none \
             --only-show-errors
-          echo "Python package activated and Blob/Durable triggers re-synced."
+          az functionapp restart --name "$FUNCTION_APP_NAME" --resource-group "$RESOURCE_GROUP" --only-show-errors
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if az rest --method post \
+              --url "https://management.azure.com/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${FUNCTION_APP_NAME}/syncfunctiontriggers?api-version=2022-03-01" \
+              --only-show-errors >/dev/null 2>&1; then
+              echo "Python package ${FUNCTION_PACKAGE_SHA256} activated and triggers re-synced."
+              exit 0
+            fi
+            echo "Attempt $attempt: Function host is not ready for trigger synchronization (waiting 30s)"
+            sleep 30
+          done
+          echo "::error::Function trigger synchronization did not succeed."
+          exit 1
 
       - name: Verify the Python Durable functions are loaded
         shell: bash
         run: |
           set -euo pipefail
-          expected="DocumentBlobStarter DocumentOrchestrator ReconcileStaleDocuments"
+          expected="CompensateDocument DocumentOrchestrator FinalizeSource InvokeBusinessWorkflow PollIncomingDocuments PollProcessingStatus ProcessAndStage ReconcileStaleDocuments"
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             functions="$(az functionapp function list --name "$FUNCTION_APP_NAME" --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv --only-show-errors 2>/dev/null || true)"
             missing=""

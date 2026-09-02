@@ -2,32 +2,34 @@
 -- Migration 004: Contained database users and least-privilege grants.
 -- =============================================================================
 -- Entra-only authentication means every principal below is a contained
--- database user mapped to an Azure AD identity -- there is no SQL login or
+-- database user mapped to a Microsoft Entra identity -- there is no SQL login or
 -- password anywhere in this repository. Run this AFTER the managed identities
 -- exist (infra deploy) and BEFORE first pipeline execution, connected as a
 -- member of the Entra SQL admin group (entraGroups.sqlAdminGroupObjectId in
 -- infra/params/*.bicepparam). scripts/post-deploy.ps1 automates this step by
--- substituting the real identity/group names for an environment.
+-- substituting the real identity/group names and object-ID SIDs for an
+-- environment. Explicit SIDs avoid requiring the SQL logical server identity
+-- to query Microsoft Graph during CREATE USER. Azure SQL maps managed identities
+-- and applications by client/application ID; groups map by object ID.
 --
--- Replace every <placeholder> below with the exact display name of the
--- corresponding Azure AD object (for a user-assigned managed identity this is
--- the identity resource's name, e.g. id-func-intakeai-dev-eus2).
+-- TYPE E identifies external users/service principals (including managed
+-- identities); TYPE X identifies external groups.
 -- =============================================================================
 
 IF DATABASE_PRINCIPAL_ID(N'<function-app-identity-name>') IS NULL
-    CREATE USER [<function-app-identity-name>] FROM EXTERNAL PROVIDER;
+    CREATE USER [<function-app-identity-name>] WITH SID = <function-app-identity-sid>, TYPE = E;
 GO
 
 IF DATABASE_PRINCIPAL_ID(N'<logic-app-user-assigned-identity-name>') IS NULL
-    CREATE USER [<logic-app-user-assigned-identity-name>] FROM EXTERNAL PROVIDER;
+    CREATE USER [<logic-app-user-assigned-identity-name>] WITH SID = <logic-app-user-assigned-identity-sid>, TYPE = E;
 GO
 
 IF DATABASE_PRINCIPAL_ID(N'<reviewer-entra-group-name>') IS NULL
-    CREATE USER [<reviewer-entra-group-name>] FROM EXTERNAL PROVIDER;
+    CREATE USER [<reviewer-entra-group-name>] WITH SID = <reviewer-entra-group-sid>, TYPE = X;
 GO
 
 IF DATABASE_PRINCIPAL_ID(N'<supervisor-entra-group-name>') IS NULL
-    CREATE USER [<supervisor-entra-group-name>] FROM EXTERNAL PROVIDER;
+    CREATE USER [<supervisor-entra-group-name>] WITH SID = <supervisor-entra-group-sid>, TYPE = X;
 GO
 
 -- ---------------------------------------------------------------------------

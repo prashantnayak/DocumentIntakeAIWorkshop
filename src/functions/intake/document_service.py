@@ -17,6 +17,10 @@ def _text(value: Any) -> str | None:
     return str(content).strip() if content else None
 
 
+def _normalize_key(value: str) -> str:
+    return " ".join(value.strip().rstrip(":").split()).casefold()
+
+
 class DocumentAnalysisService:
     def __init__(
         self,
@@ -85,15 +89,17 @@ class DocumentAnalysisService:
         result: dict[str, str | None] = {}
         for required in self._required_fields:
             accepted = {
-                required.casefold(),
-                *(alias.casefold() for alias in self._aliases.get(required, [])),
+                _normalize_key(required),
+                *(
+                    _normalize_key(alias)
+                    for alias in self._aliases.get(required, [])
+                ),
             }
             result[required] = None
             for pair in pairs:
                 key = _text(getattr(pair, "key", None))
                 value = _text(getattr(pair, "value", None))
-                if key and value and key.casefold() in accepted:
+                if key and value and _normalize_key(key) in accepted:
                     result[required] = value
                     break
         return result
-

@@ -127,6 +127,9 @@ param deploymentArtifactsContainerName string = 'deployment-artifacts'
 @description('Object ID of the CI/CD service principal that publishes application deployment packages. Supplied from the AZURE_DEPLOYER_OBJECT_ID environment secret (printed by scripts/bootstrap.ps1); leave empty to skip the container-scoped Storage Blob Data Contributor grant.')
 param deploymentArtifactsPublisherObjectId string = ''
 
+@description('Blob path of the immutable Python Function package inside the deployment-artifacts container. CI supplies a SHA-256-addressed path.')
+param functionPackageBlobName string = 'function-python/current.zip'
+
 @allowed([
   'ServicePrincipal'
   'User'
@@ -408,6 +411,20 @@ var functionSubnetEgressRules = [
       sourceAddressPrefix: '*'
       sourcePortRange: '*'
       destinationAddressPrefix: 'AzureResourceManager'
+      destinationPortRange: '443'
+    }
+  }
+  {
+    name: 'Allow-FunctionsExtensionBundles-Outbound'
+    properties: {
+      description: 'Allows Microsoft-hosted extension bundle downloads over TLS; cdn.functions.azure.com has no dedicated service tag.'
+      access: 'Allow'
+      direction: 'Outbound'
+      priority: 140
+      protocol: 'Tcp'
+      sourceAddressPrefix: '*'
+      sourcePortRange: '*'
+      destinationAddressPrefix: 'AzureCloud'
       destinationPortRange: '443'
     }
   }
@@ -852,11 +869,9 @@ module sql 'modules/sql.bicep' = {
 // ---------------------------------------------------------------------------
 
 // Stable, versionless location of the Function deployment package inside the
-// private deployment-artifacts container. .github/workflows/deploy.yml
-// overwrites this exact blob on every code deployment and then restarts the
-// app, so an infrastructure redeployment can never clobber the app setting
-// that points at it.
-var functionPackageUrl = '${storageRuntime.outputs.primaryBlobEndpoint}${deploymentArtifactsContainerName}/function-python/current.zip'
+// CI overrides functionPackageBlobName with a SHA-256-addressed blob path so
+// infrastructure redeployments preserve the exact immutable package version.
+var functionPackageUrl = '${storageRuntime.outputs.primaryBlobEndpoint}${deploymentArtifactsContainerName}/${functionPackageBlobName}'
 
 module functionApp 'modules/function-app.bicep' = {
   name: 'func-deploy'
@@ -1102,7 +1117,7 @@ output deploymentArtifactsStorageAccountName string = storageRuntime.outputs.nam
 @description('Name of the private deployment-artifacts container application packages are published to.')
 output deploymentArtifactsContainerName string = storageRuntime.outputs.deploymentArtifactsContainerName
 
-@description('Exact blob path the Function App run-from-package setting points at. The code-deploy job must overwrite this blob.')
+@description('Exact immutable blob URL the Function App run-from-package setting points at.')
 output functionPackageBlobUrl string = functionPackageUrl
 
 @description('False when the Document Intelligence account is still using Microsoft-managed keys because the CMK second pass has not been run -- see infra/modules/document-intelligence.bicep.')

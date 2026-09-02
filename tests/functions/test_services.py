@@ -4,12 +4,15 @@ import json
 import uuid
 from types import SimpleNamespace
 
+import pytest
+
+from intake.blob_service import PhiBlobService
 from intake.models import (
     ClassificationResult,
     ProcessingState,
     ProcessingWorkItem,
 )
-from intake.blob_service import PhiBlobService
+from intake.document_service import DocumentAnalysisService
 from intake.processing_service import DocumentProcessingService
 from intake.registration_service import SourceRegistrationService
 from intake.routing import DeterministicRoutingService
@@ -58,6 +61,11 @@ class FakeBlobs:
     def __init__(self) -> None:
         self.payload: dict[str, object] | None = None
 
+    def list_blob_names(self, prefix: str, max_results: int) -> tuple[str, ...]:
+        assert prefix == "incoming/"
+        assert max_results == 100
+        return ("incoming/private.pdf",)
+
     def resolve_identity(self, blob_name: str) -> SimpleNamespace:
         return SimpleNamespace(
             account_name="account",
@@ -93,7 +101,7 @@ def test_registration_uses_exact_version_identity() -> None:
     item = work_item()
     repository = FakeRepository(item)
     service = SourceRegistrationService(
-        repository, FakeBlobs(), "documents", "incoming/"
+        repository, FakeBlobs(), "documents", "incoming/", 100
     )
     result = service.register_trigger(
         SimpleNamespace(name="documents/incoming/private.pdf")
@@ -106,6 +114,102 @@ def test_registration_uses_exact_version_identity() -> None:
         "version",
         '"etag"',
     )
+
+
+def test_polling_registration_uses_exact_version_identity() -> None:
+    item = work_item()
+    repository = FakeRepository(item)
+    service = SourceRegistrationService(
+        repository, FakeBlobs(), "documents", "incoming/", 100
+    )
+
+    blob_names = service.list_pending_blob_names()
+    assert blob_names == ("incoming/private.pdf",)
+    assert service.register_blob_name(blob_names[0]) == item.document_id
+    assert repository.register_args == (
+        "account",
+        "documents",
+        "incoming/private.pdf",
+        "version",
+        '"etag"',
+    )
+
+
+def test_read_sas_preserves_exact_blob_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    item = work_item()
+    blob = SimpleNamespace(
+        url="https://account.blob.core.windows.net/documents/incoming/private.pdf"
+    )
+    client = SimpleNamespace(
+        account_name="account",
+        get_user_delegation_key=lambda start, expiry: object(),
+        get_blob_client=lambda container, name, version_id: blob,
+    )
+    credential = SimpleNamespace()
+    monkeypatch.setattr(
+        "intake.blob_service.generate_blob_sas",
+        lambda **kwargs: "sv=test&sig=secret",
+    )
+    service = PhiBlobService(
+        client,
+        credential,
+        "documents",
+        "failed/",
+        "workflow-payloads/",
+        24,
+    )
+
+    url, _ = service.create_read_sas(item)
+
+    assert url == (
+        "https://account.blob.core.windows.net/documents/incoming/private.pdf"
+        "?versionid=version&sv=test&sig=secret"
+    )
+
+
+def test_document_analysis_matches_colon_terminated_field_labels() -> None:
+    pairs = [
+        SimpleNamespace(
+            key=SimpleNamespace(content="Patient Identifier:"),
+            value=SimpleNamespace(content="SYN-TEST-0000001"),
+        ),
+        SimpleNamespace(
+            key=SimpleNamespace(content="Date of Service :"),
+            value=SimpleNamespace(content="2020-01-01"),
+        ),
+        SimpleNamespace(
+            key=SimpleNamespace(content="Provider:"),
+            value=SimpleNamespace(content="Dr. Sample Synthetic MD"),
+        ),
+    ]
+    extraction = SimpleNamespace(
+        pages=[SimpleNamespace()],
+        content="synthetic content",
+        key_value_pairs=pairs,
+    )
+    analyzer = DocumentAnalysisService(
+        SimpleNamespace(
+            begin_analyze_document=lambda *args, **kwargs: SimpleNamespace(
+                result=lambda: extraction
+            )
+        ),
+        "prebuilt-layout",
+        "",
+        ("PatientIdentifier", "DateOfService", "Provider"),
+        {
+            "PatientIdentifier": ["Patient Identifier"],
+            "DateOfService": ["Date of Service"],
+        },
+    )
+
+    result = analyzer.analyze(b"synthetic")
+
+    assert result.confidence == 1.0
+    assert result.required_field_values == {
+        "PatientIdentifier": "SYN-TEST-0000001",
+        "DateOfService": "2020-01-01",
+        "Provider": "Dr. Sample Synthetic MD",
+    }
 
 
 def test_duplicate_stops_before_analysis() -> None:

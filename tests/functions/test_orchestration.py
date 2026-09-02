@@ -115,6 +115,11 @@ def test_starter_is_deterministic_and_idempotent() -> None:
     assert not asyncio.run(function_app.ensure_started(existing, document_id))
     assert existing.started == []
 
+    failed = FakeClient(SimpleNamespace(runtime_status="Failed"))
+    assert asyncio.run(function_app.ensure_started(failed, document_id))
+    assert failed.purged == [f"document-{document_id}"]
+    assert failed.started[0][1] == f"document-{document_id}"
+
 
 def test_reconciliation_restarts_only_inactive_instances() -> None:
     document_id = "3b5e74f8-08d2-49c1-ae50-bfeafbd0a96b"
@@ -127,21 +132,20 @@ def test_reconciliation_restarts_only_inactive_instances() -> None:
     assert completed.started[0][1] == f"document-{document_id}"
 
 
-def test_generated_bindings_use_polling_blob_and_disable_phi_tracing() -> None:
+def test_generated_bindings_use_timer_polling_and_disable_phi_tracing() -> None:
     functions = {
         item.get_function_name(): [
             binding.get_dict_repr() for binding in item.get_bindings()
         ]
         for item in function_app.app.get_functions()
     }
-    blob = next(
+    timer = next(
         binding
-        for binding in functions["DocumentBlobStarter"]
-        if binding["type"] == "blobTrigger"
+        for binding in functions["PollIncomingDocuments"]
+        if binding["type"] == "timerTrigger"
     )
-    assert blob["path"] == "%PhiStorage__ContainerName%/%PhiStorage__IncomingPrefix%/{name}"
-    assert blob["connection"] == "PhiStorage"
-    assert blob["source"] == "LogsAndContainerScan"
+    assert timer["schedule"] == "%IntakePollingSchedule%"
+    assert timer["useMonitor"] is True
 
     host_path = Path(function_app.__file__).with_name("host.json")
     host = json.loads(host_path.read_text(encoding="utf-8"))
@@ -154,7 +158,7 @@ def test_generated_bindings_use_polling_blob_and_disable_phi_tracing() -> None:
         host_path.with_name("local.settings.sample.json").read_text(encoding="utf-8")
     )["Values"]
     assert local_settings["PhiStorage__blobServiceUri"]
-    assert local_settings["PhiStorage__credential"] == "managedidentity"
-    assert "PhiStorage__clientId" in local_settings
     assert "PhiStorage__queueServiceUri" not in local_settings
+    assert local_settings["IntakePollingSchedule"]
+    assert local_settings["IntakePollingBatchSize"] == "100"
     assert "AzureWebJobsStorage" in local_settings

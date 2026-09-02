@@ -4,26 +4,29 @@
       "displayName": "intake-sql",
       "parameterValues": {
         "serverName": "@appsetting('Sql_DataSource')",
-        "databaseName": "@appsetting('Sql_InitialCatalog')"
+        "databaseName": "@appsetting('Sql_InitialCatalog')",
+        "managedIdentityType": "UserAssigned",
+        "managedIdentityClientId": "@appsetting('Sql_UserAssignedIdentityClientId')",
+        "authProvider": {
+          "Type": "ManagedServiceIdentity"
+        }
       },
+      "parameterSetName": "ManagedServiceIdentity",
       "serviceProvider": {
         "id": "/serviceProviders/sql"
-      },
-      "authentication": {
-        "type": "ManagedServiceIdentity",
-        "identity": "@appsetting('Sql_UserAssignedIdentityResourceId')"
       }
     },
     "AzureBlob": {
       "displayName": "intake-phi-blob",
       "parameterValues": {
-        "blobStorageEndpoint": "@appsetting('PhiStorage_BlobServiceUri')"
+        "blobStorageEndpoint": "@appsetting('PhiStorage_BlobServiceUri')",
+        "authProvider": {
+          "Type": "ManagedServiceIdentity"
+        }
       },
+      "parameterSetName": "ManagedServiceIdentity",
       "serviceProvider": {
         "id": "/serviceProviders/AzureBlob"
-      },
-      "authentication": {
-        "type": "ManagedServiceIdentity"
       }
     }
   },

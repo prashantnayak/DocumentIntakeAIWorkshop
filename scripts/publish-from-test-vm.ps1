@@ -77,19 +77,22 @@ Connect-AzAccount -Identity -Subscription $SubscriptionId | Out-Null
 $storageContext = New-AzStorageContext `
     -StorageAccountName $ArtifactsStorageAccountName `
     -UseConnectedAccount
+$functionBlobName = "function-app/$($FunctionPackageSha256.ToLowerInvariant()).zip"
+$logicAppBlobName = "logic-app/$($LogicAppPackageSha256.ToLowerInvariant()).zip"
+$functionPackageUrl = "https://$ArtifactsStorageAccountName.blob.core.windows.net/$ArtifactsContainerName/$functionBlobName"
 $uploaded = $false
 for ($attempt = 1; $attempt -le 12 -and -not $uploaded; $attempt++) {
     try {
         Set-AzStorageBlobContent `
             -File $functionPackagePath `
             -Container $ArtifactsContainerName `
-            -Blob 'function-python/current.zip' `
+            -Blob $functionBlobName `
             -Context $storageContext `
             -Force | Out-Null
         Set-AzStorageBlobContent `
             -File $logicAppPackagePath `
             -Container $ArtifactsContainerName `
-            -Blob 'logic-app/current.zip' `
+            -Blob $logicAppBlobName `
             -Context $storageContext `
             -Force | Out-Null
         $uploaded = $true
@@ -145,11 +148,68 @@ Set-AzKeyVaultSecret `
     -Name $CallbackSecretName `
     -SecretValue (ConvertTo-SecureString $callbackUrl -AsPlainText -Force) | Out-Null
 
+$appSettingsPath = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$FunctionAppName/config/appsettings/list?api-version=2022-03-01"
+$appSettingsResponse = Invoke-AzRestMethod -Method POST -Path $appSettingsPath
+$appSettings = (ConvertFrom-Json $appSettingsResponse.Content).properties
+$appSettings | Add-Member `
+    -MemberType NoteProperty `
+    -Name WEBSITE_RUN_FROM_PACKAGE `
+    -Value $functionPackageUrl `
+    -Force
+$updateSettingsPath = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$FunctionAppName/config/appsettings?api-version=2022-03-01"
+Invoke-AzRestMethod `
+    -Method PUT `
+    -Path $updateSettingsPath `
+    -Payload (@{ properties = $appSettings } | ConvertTo-Json -Depth 10) | Out-Null
+
 Restart-AzWebApp -ResourceGroupName $ResourceGroupName -Name $FunctionAppName | Out-Null
 $syncPath = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$FunctionAppName/syncfunctiontriggers?api-version=2022-03-01"
-Invoke-AzRestMethod -Method POST -Path $syncPath | Out-Null
+$synced = $false
+for ($attempt = 1; $attempt -le 10 -and -not $synced; $attempt++) {
+    try {
+        Invoke-AzRestMethod -Method POST -Path $syncPath | Out-Null
+        $synced = $true
+    }
+    catch {
+        if ($attempt -eq 10) {
+            throw
+        }
+        Start-Sleep -Seconds 30
+    }
+}
+
+$expectedFunctions = @(
+    'CompensateDocument'
+    'DocumentOrchestrator'
+    'FinalizeSource'
+    'InvokeBusinessWorkflow'
+    'PollIncomingDocuments'
+    'PollProcessingStatus'
+    'ProcessAndStage'
+    'ReconcileStaleDocuments'
+)
+$functionsPath = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$FunctionAppName/functions?api-version=2022-03-01"
+$functionsReady = $false
+for ($attempt = 1; $attempt -le 10 -and -not $functionsReady; $attempt++) {
+    $functionResponse = Invoke-AzRestMethod -Method GET -Path $functionsPath
+    $functionNames = @((ConvertFrom-Json $functionResponse.Content).value.properties.name)
+    if (-not $functionNames) {
+        $functionNames = @((ConvertFrom-Json $functionResponse.Content).value.name | ForEach-Object { ($_ -split '/')[-1] })
+    }
+    $missingFunctions = @($expectedFunctions | Where-Object { $_ -notin $functionNames })
+    $functionsReady = $missingFunctions.Count -eq 0
+    if (-not $functionsReady) {
+        Start-Sleep -Seconds 30
+    }
+}
+if (-not $functionsReady) {
+    throw "Function App did not load expected functions: $($missingFunctions -join ', ')"
+}
 
 Write-Output 'DEPLOYMENT_OK'
 Write-Output "WORKFLOWS=$($workflowNames -join ',')"
+Write-Output "FUNCTIONS=$($functionNames -join ',')"
+Write-Output "FUNCTION_PACKAGE_SHA256=$($FunctionPackageSha256.ToLowerInvariant())"
+Write-Output "LOGIC_PACKAGE_SHA256=$($LogicAppPackageSha256.ToLowerInvariant())"
 Write-Output 'PACKAGES_UPLOADED=true'
 Write-Output 'CALLBACK_ROTATED=true'

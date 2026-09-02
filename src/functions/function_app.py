@@ -33,8 +33,11 @@ def _runtime_state(status: Any) -> str:
 
 async def ensure_started(client: Any, document_id: str) -> bool:
     instance_id = f"document-{document_id}"
-    if await client.get_status(instance_id) is not None:
+    status = await client.get_status(instance_id)
+    if status is not None and _runtime_state(status) in ACTIVE_RUNTIME_STATES:
         return False
+    if status is not None:
+        await client.purge_instance_history(instance_id)
     await client.start_new(
         ORCHESTRATOR_NAME,
         instance_id=instance_id,
@@ -43,24 +46,45 @@ async def ensure_started(client: Any, document_id: str) -> bool:
     return True
 
 
-@app.function_name(name="DocumentBlobStarter")
-@app.blob_trigger(
-    arg_name="source_blob",
-    path="%PhiStorage__ContainerName%/%PhiStorage__IncomingPrefix%/{name}",
-    connection="PhiStorage",
-    source=func.BlobSource.LOGS_AND_CONTAINER_SCAN,
+@app.function_name(name="PollIncomingDocuments")
+@app.timer_trigger(
+    schedule="%IntakePollingSchedule%",
+    arg_name="timer",
+    run_on_startup=False,
+    use_monitor=True,
 )
 @app.durable_client_input(client_name="client")
-async def document_blob_starter(
-    source_blob: func.InputStream, client: df.DurableOrchestrationClient
+async def poll_incoming_documents(
+    timer: func.TimerRequest, client: df.DurableOrchestrationClient
 ) -> None:
+    del timer
     try:
-        document_id = _service("registration").register_trigger(source_blob)
-        await ensure_started(client, document_id)
-        safe_log(logger, logging.INFO, "Blob version registered.", document_id)
+        blob_names = _service("registration").list_pending_blob_names()
     except Exception:
-        logger.error("Blob registration failed; trigger will retry.")
-        raise RuntimeError("SOURCE_REGISTRATION_FAILED") from None
+        logger.error("Incoming-document polling failed; the next timer will retry.")
+        raise RuntimeError("SOURCE_POLLING_FAILED") from None
+    failures = 0
+    for blob_name in blob_names:
+        try:
+            document_id = _service("registration").register_blob_name(blob_name)
+        except Exception as exc:
+            failures += 1
+            logger.error(
+                "Incoming blob registration failed; it will be retried. "
+                f"ErrorType={type(exc).__name__}"
+            )
+            continue
+        try:
+            if await ensure_started(client, document_id):
+                safe_log(logger, logging.INFO, "Blob version registered.", document_id)
+        except Exception as exc:
+            failures += 1
+            logger.error(
+                "Incoming orchestration start failed; it will be retried. "
+                f"ErrorType={type(exc).__name__}"
+            )
+    if failures:
+        raise RuntimeError("SOURCE_POLLING_PARTIAL_FAILURE")
 
 
 def orchestration_logic(context: df.DurableOrchestrationContext) -> Any:

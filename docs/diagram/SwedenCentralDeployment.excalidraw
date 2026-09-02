@@ -20,7 +20,7 @@
     {"type":"rectangle","id":"phi-storage","x":330,"y":220,"width":190,"height":80,"strokeColor":"#0078D4","backgroundColor":"#CFE4FA","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
     {"type":"text","id":"phi-storage-text","x":340,"y":228,"width":170,"height":105,"text":"PHI Blob Storage\nincoming / processed / failed","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
     {"type":"rectangle","id":"polling-trigger","x":580,"y":220,"width":190,"height":80,"strokeColor":"#F7630C","backgroundColor":"#FFF4CE","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
-    {"type":"text","id":"polling-trigger-text","x":590,"y":228,"width":170,"height":105,"text":"Identity-based\npolling Blob trigger","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"text","id":"polling-trigger-text","x":590,"y":228,"width":170,"height":105,"text":"Timer poller\nBlob SDK + identity","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
     {"type":"arrow","id":"storage-polling","x":520,"y":260,"width":60,"height":0,"strokeColor":"#1e1e1e","strokeWidth":2,"points":[[0,0],[60,0]]},
 
     {"type":"rectangle","id":"function","x":330,"y":380,"width":190,"height":90,"strokeColor":"#107C10","backgroundColor":"#DFF6DD","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
@@ -36,7 +36,7 @@
     {"type":"rectangle","id":"logic","x":330,"y":555,"width":220,"height":115,"strokeColor":"#5C2D91","backgroundColor":"#E8DAEF","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
     {"type":"text","id":"logic-text","x":340,"y":565,"width":200,"height":140,"text":"Logic Apps Standard\nbusiness rules\nhuman approval + SLA","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
     {"type":"rectangle","id":"runtime-storage","x":600,"y":700,"width":180,"height":80,"strokeColor":"#495057","backgroundColor":"#F3F2F1","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
-    {"type":"text","id":"runtime-storage-text","x":610,"y":705,"width":160,"height":105,"text":"Runtime Storage\nDurable state + poison queue\nhost + code packages","fontSize":13,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"text","id":"runtime-storage-text","x":610,"y":705,"width":160,"height":105,"text":"Runtime Storage\nDurable state\nhost + code packages","fontSize":13,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
     {"type":"rectangle","id":"key-vault","x":825,"y":700,"width":165,"height":80,"strokeColor":"#495057","backgroundColor":"#F3F2F1","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
     {"type":"text","id":"key-vault-text","x":835,"y":705,"width":145,"height":105,"text":"Key Vault\nCMK + signed private\nworkflow callback","fontSize":13,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
     {"type":"arrow","id":"function-logic","x":425,"y":470,"width":15,"height":85,"strokeColor":"#5C2D91","strokeWidth":2,"points":[[0,0],[15,85]]},

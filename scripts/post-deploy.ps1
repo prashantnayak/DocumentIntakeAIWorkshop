@@ -19,19 +19,37 @@
 .PARAMETER LogicAppIdentityName
     Name of the Logic App's user-assigned managed identity (e.g. id-logic-intakeai-dev-eus2).
 
+.PARAMETER FunctionAppIdentityClientId
+    Microsoft Entra client/application ID of the Function App user-assigned
+    identity. Azure SQL maps service-principal SIDs to application IDs.
+
+.PARAMETER LogicAppIdentityClientId
+    Microsoft Entra client/application ID of the Logic App user-assigned
+    identity. Azure SQL maps service-principal SIDs to application IDs.
+
 .PARAMETER ReviewerGroupName
     Display name of the reviewer Entra ID group.
 
 .PARAMETER SupervisorGroupName
     Display name of the supervisor Entra ID group.
 
+.PARAMETER ReviewerGroupObjectId
+    Microsoft Entra object ID of the reviewer group.
+
+.PARAMETER SupervisorGroupObjectId
+    Microsoft Entra object ID of the supervisor group.
+
 .EXAMPLE
     ./post-deploy.ps1 -SqlServerFqdn sql-intakeai-dev-eus2-abc1234.database.windows.net `
         -DatabaseName sqldb-intake `
         -FunctionAppIdentityName id-func-intakeai-dev-eus2 `
         -LogicAppIdentityName id-logic-intakeai-dev-eus2 `
+        -FunctionAppIdentityClientId 00000000-0000-0000-0000-000000000001 `
+        -LogicAppIdentityClientId 00000000-0000-0000-0000-000000000002 `
         -ReviewerGroupName sg-intakeai-reviewers `
-        -SupervisorGroupName sg-intakeai-supervisors
+        -SupervisorGroupName sg-intakeai-supervisors `
+        -ReviewerGroupObjectId 00000000-0000-0000-0000-000000000003 `
+        -SupervisorGroupObjectId 00000000-0000-0000-0000-000000000004
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -48,15 +66,33 @@ param(
     [string]$LogicAppIdentityName,
 
     [Parameter(Mandatory = $true)]
+    [guid]$FunctionAppIdentityClientId,
+
+    [Parameter(Mandatory = $true)]
+    [guid]$LogicAppIdentityClientId,
+
+    [Parameter(Mandatory = $true)]
     [string]$ReviewerGroupName,
 
     [Parameter(Mandatory = $true)]
-    [string]$SupervisorGroupName
+    [string]$SupervisorGroupName,
+
+    [Parameter(Mandatory = $true)]
+    [guid]$ReviewerGroupObjectId,
+
+    [Parameter(Mandatory = $true)]
+    [guid]$SupervisorGroupObjectId
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $migrationsPath = Join-Path $repoRoot 'sql\migrations'
+
+function ConvertTo-SqlSidLiteral {
+    param([Parameter(Mandatory = $true)][guid]$IdentityId)
+
+    '0x' + (($IdentityId.ToByteArray() | ForEach-Object { $_.ToString('X2') }) -join '')
+}
 
 Write-Host 'Acquiring an Entra ID access token for Azure SQL ...' -ForegroundColor Cyan
 if (-not (Get-AzContext)) {
@@ -77,6 +113,10 @@ foreach ($file in $migrationFiles) {
         $sqlText = $sqlText.Replace('<logic-app-user-assigned-identity-name>', $LogicAppIdentityName)
         $sqlText = $sqlText.Replace('<reviewer-entra-group-name>', $ReviewerGroupName)
         $sqlText = $sqlText.Replace('<supervisor-entra-group-name>', $SupervisorGroupName)
+        $sqlText = $sqlText.Replace('<function-app-identity-sid>', (ConvertTo-SqlSidLiteral $FunctionAppIdentityClientId))
+        $sqlText = $sqlText.Replace('<logic-app-user-assigned-identity-sid>', (ConvertTo-SqlSidLiteral $LogicAppIdentityClientId))
+        $sqlText = $sqlText.Replace('<reviewer-entra-group-sid>', (ConvertTo-SqlSidLiteral $ReviewerGroupObjectId))
+        $sqlText = $sqlText.Replace('<supervisor-entra-group-sid>', (ConvertTo-SqlSidLiteral $SupervisorGroupObjectId))
     }
 
     if ($PSCmdlet.ShouldProcess($file.Name, 'Invoke-Sqlcmd')) {

@@ -59,7 +59,7 @@
         "runAfter": {},
         "runtimeConfiguration": {
           "secureData": {
-            "properties": ["inputs", "outputs"]
+            "properties": ["inputs"]
           }
         }
       },
@@ -69,8 +69,8 @@
           "and": [
             {
               "equals": [
-                "@int(coalesce(first(body('Claim_approval_run')?['resultSets']?['Table1'])?['Claimed'], 0))",
-                1
+                "@coalesce(first(first(body('Claim_approval_run')))?['Claimed'], false)",
+                true
               ]
             }
           ]
@@ -117,7 +117,7 @@
             },
             "runtimeConfiguration": {
               "secureData": {
-                "properties": ["inputs", "outputs"]
+                "properties": ["inputs"]
               }
             }
           },

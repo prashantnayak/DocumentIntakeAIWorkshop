@@ -64,8 +64,8 @@
           "and": [
             {
               "equals": [
-                "@int(coalesce(first(body('Query_and_claim_notification')?['resultSets']?['Table1'])?['Claimed'], 0))",
-                1
+                "@coalesce(first(first(body('Query_and_claim_notification')))?['Claimed'], false)",
+                true
               ]
             }
           ]

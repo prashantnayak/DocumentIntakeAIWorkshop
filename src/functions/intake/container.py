@@ -23,7 +23,10 @@ def services() -> dict[str, object]:
         managed_identity_client_id=settings.managed_identity_client_id or None
     )
     repository = SqlProcessingRepository(
-        settings.sql_server, settings.sql_database, credential
+        settings.sql_server,
+        settings.sql_database,
+        credential,
+        stale_after_minutes=settings.reconciliation_stale_minutes,
     )
     blob_client = BlobServiceClient(settings.blob_service_uri, credential)
     blobs = PhiBlobService(
@@ -53,6 +56,7 @@ def services() -> dict[str, object]:
             blobs,
             settings.container_name,
             settings.incoming_prefix,
+            settings.polling_batch_size,
         ),
         "processing": DocumentProcessingService(
             repository, blobs, analyzer, routing
@@ -61,4 +65,3 @@ def services() -> dict[str, object]:
             repository, settings.workflow_url
         ),
     }
-

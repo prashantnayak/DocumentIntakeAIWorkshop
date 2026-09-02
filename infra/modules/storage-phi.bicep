@@ -39,7 +39,7 @@ param keyVaultResourceId string
 @description('Name of the customer-managed key used to encrypt this storage account.')
 param cmkKeyName string
 
-@description('Principal ID of the Function App user-assigned identity, granted Storage Blob Data Contributor + Storage Blob Delegator scoped to this storage account so it can read/write/move blobs and mint user-delegation SAS links.')
+@description('Principal ID of the Function application user-assigned identity, granted document-container access plus Storage Blob Delegator for user-delegation SAS links.')
 param functionIdentityPrincipalId string
 
 // NOTE: the Logic App's Storage Blob Data Contributor grant on this
@@ -68,7 +68,6 @@ param immutabilityRetentionDays int
 
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var storageBlobDelegatorRoleId = 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a'
-
 module storageAccount 'br/public:avm/res/storage/storage-account:0.33.0' = {
   name: take('st-${name}-deploy', 64)
   params: {
@@ -130,7 +129,7 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.33.0' = {
               principalId: functionIdentityPrincipalId
               roleDefinitionIdOrName: storageBlobDataOwnerRoleId
               principalType: 'ServicePrincipal'
-              description: 'Function App: polling Blob-trigger data role plus exact-version processing, container-scoped only.'
+              description: 'Function activities: exact-version document processing and sidecar lifecycle, scoped to the documents container.'
             }
           ]
         }
@@ -160,6 +159,48 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.33.0' = {
       }
     ]
   }
+}
+
+resource phiStorageAccount 'Microsoft.Storage/storageAccounts@2025-01-01' existing = {
+  name: name
+}
+
+resource defaultBlobService 'Microsoft.Storage/storageAccounts/blobServices@2025-01-01' existing = {
+  parent: phiStorageAccount
+  name: 'default'
+}
+
+#disable-next-line use-recent-api-versions
+resource blobDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'diag-stphi-blob'
+  scope: defaultBlobService
+  properties: {
+    workspaceId: logAnalyticsWorkspaceResourceId
+    logAnalyticsDestinationType: 'Dedicated'
+    logs: [
+      {
+        category: 'StorageRead'
+        enabled: true
+      }
+      {
+        category: 'StorageWrite'
+        enabled: true
+      }
+      {
+        category: 'StorageDelete'
+        enabled: true
+      }
+    ]
+    metrics: [
+      {
+        category: 'Transaction'
+        enabled: true
+      }
+    ]
+  }
+  dependsOn: [
+    storageAccount
+  ]
 }
 
 @description('Resource ID of the PHI storage account.')

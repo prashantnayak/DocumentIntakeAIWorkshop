@@ -18,7 +18,7 @@
 | Integrity | Intake records the immutable blob version ID and ETag; Python downloads that exact version with an ETag precondition, then SHA-256 hashes it. Blob versioning, soft delete, SQL unique indexes, and append-only decisions protect later processing. |
 | Audit | Azure diagnostics, Application Insights, secured Logic Apps run history, `dbo.ProcessingInbox`, `dbo.WorkflowOperations`, and append-only `dbo.DecisionTrail`. Logs use identifiers and safe error codes, not extracted values. |
 | Person authentication | Office 365 approval uses the reviewer's Entra-backed mailbox and records the returned user identity. Reviewer links are single-version, read-only, short-lived user-delegation SAS URLs reachable only on the private network. |
-| Availability and recovery | Durable state, SQL inbox/leases, trigger poison notifications, reconciliation, ZRS storage, SQL point-in-time restore, and alerts. Workshop exceptions below limit production suitability. |
+| Availability and recovery | Durable state, SQL inbox/leases, timer retries, reconciliation, ZRS storage, SQL point-in-time restore, and alerts. Workshop exceptions below limit production suitability. |
 
 ## Data minimization
 
@@ -39,10 +39,21 @@ signed Request-trigger callback. Deployment stores the callback in Key Vault
 under a versionless secret name; the Function uses a Key Vault app-setting
 reference. The URL signature must be handled as a secret and never logged.
 
-Application storage access, Blob polling, Durable runtime access, SQL,
-Document Intelligence, and optional Graph access use managed identity.
-Hosting content shares retain one platform-required Azure Files connection
-string, generated at deployment and not exposed as an output.
+Application data access, Blob polling, Durable runtime access, SQL, Document
+Intelligence, and optional Graph access use managed identity. The timer poller
+lists the incoming prefix directly with the Blob SDK and the application
+identity's container-scoped role. It requires neither a PHI queue nor
+account-level management permission. The PHI account remains private and keyless.
+The non-PHI
+runtime account retains platform-required connection strings for the Azure
+Files content shares and Logic Apps Standard host state. Logic Apps Standard's
+workflow-state provider still parses `AzureWebJobsStorage` as a classic
+connection string and does not start with identity-only host settings. These
+values are generated during deployment and are not exposed as outputs. This
+tenant's `StorageAccount_DisableLocalAuth_Modify` policy therefore requires a
+time-bounded, resource-scoped exemption on the runtime account; the Python
+Function still uses identity-based host storage, and the PHI storage account
+remains keyless.
 
 ## Document Intelligence encryption
 
@@ -58,7 +69,7 @@ then verify the deployment output before claiming CMK coverage.
   beyond this resource group.
 - Defender for Cloud plans are feature-flagged and subscription-wide.
 - SQL auditing, storage change feed, Key Vault audit logs, Function/Durable
-  telemetry, Logic App workflow telemetry, poison-queue depth, stale-inbox, SLA,
+  telemetry, Logic App workflow telemetry, polling failures, stale-inbox, SLA,
   and dependency alerts feed the central workspace.
 - Production retention, legal hold, RPO/RTO, regional recovery, and reviewer
   access procedures require owner approval before real PHI is processed.
@@ -71,6 +82,7 @@ then verify the deployment output before claiming CMK coverage.
 | PHI storage | ZRS, versioning, soft delete | Zone protection, not regional disaster recovery. |
 | Function plan | Linux `EP1`, not zone-redundant | Subscription lacks Sweden Central zone-redundant worker quota; raise quota and enable zones for production. |
 | Logic App plan | Private `WS1`, one worker | Workshop capacity; size and resilience require production review. |
+| Runtime extension egress | `AzureCloud` on TCP 443 | Azure Functions and Logic Apps Standard must download Microsoft extension bundles from `cdn.functions.azure.com`, which has no narrower NSG service tag. Use Azure Firewall FQDN rules for production. |
 | SQL backup | 35-day point-in-time restore, no LTR | Does not meet multi-year backup retention; export/retention design is required for production. |
 | Test VM | Encryption at host disabled | Subscription feature exception. Managed-disk encryption, Trusted Launch, Secure Boot, and vTPM remain enabled. Never use it for PHI. |
 | Audit retention | Configured central retention | Must be reconciled with the customer's final medical-record and security-log policy. |

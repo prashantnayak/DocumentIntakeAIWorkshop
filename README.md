@@ -1,6 +1,6 @@
 # Document Intake AI Workshop
 
-Private, identity-first document intake on Azure. A polling Blob trigger starts a
+Private, identity-first document intake on Azure. A timer-based Blob poller starts a
 Python Durable Functions orchestration, Azure AI Document Intelligence extracts
 and classifies the exact registered blob version, Logic Apps Standard applies
 business rules and human approval, and Azure SQL holds processing state and the
@@ -15,15 +15,13 @@ append-only decision trail.
 | Environment | One development/workshop environment, under 1,000 documents/day |
 | Function runtime | Python 3.12 on Linux Elastic Premium `EP1` |
 | Workflow runtime | Private, versioned Logic Apps Standard host (`logic-v2-*`) |
-| Intake | Identity-based polling Blob trigger on `documents/<configured-prefix>/` |
+| Intake | Identity-based timer poller on `documents/<configured-prefix>/` |
 | State | Azure SQL `dbo.ProcessingInbox`, `dbo.WorkflowOperations`, `dbo.DecisionTrail`, and `dbo.Documents` |
 
-The design has no event-delivery service or message broker. The custom
-`PhiStorage` trigger connection sets only `blobServiceUri`, `credential`, and
-`clientId`; it deliberately has no PHI-storage queue endpoint. Trigger
-checkpoints and `webjobs-blobtrigger-poison` use private
-`AzureWebJobsStorage`, whose queue endpoint is private and where the Function
-identity has Storage Queue Data Contributor.
+The design has no event-delivery service or message broker. `PollIncomingDocuments`
+uses the Azure Blob SDK and the Function managed identity to list the private Blob
+prefix directly every minute. It does not use the Blob trigger extension or a PHI
+queue. Durable state remains in private `AzureWebJobsStorage`.
 
 ## Repository layout
 
@@ -39,9 +37,9 @@ identity has Storage Queue Data Contributor.
 
 ## How processing works
 
-1. The private Blob extension polls `documents/incoming-v2/` during migration
-   validation, using the Function managed identity.
-2. `DocumentBlobStarter` registers the storage account, container, blob name,
+1. `PollIncomingDocuments` lists `documents/incoming-v2/` every minute during
+   migration validation, using the Function managed identity.
+2. The poller registers the storage account, container, blob name,
    immutable version ID, and ETag in `dbo.ProcessingInbox`. A deterministic
    Durable instance starts with only the `DocumentId`.
 3. Activities download that exact version with an ETag precondition, hash it,
@@ -107,7 +105,7 @@ See [architecture](docs/architecture.md) and the
 1. Deploy the replacement stack with `functionIncomingPrefix='incoming-v2'`.
 2. From the private test VM, upload both synthetic fixtures to
    `documents/incoming-v2/`. Verify terminal SQL state, blob movement, approval,
-   SLA waits, poison-queue monitoring, and reconciliation.
+   SLA waits, polling-failure monitoring, and reconciliation.
 3. Pause producers. Let all legacy work drain, confirm no active legacy runs,
    and retain evidence of the replacement smoke test.
 4. Change `functionIncomingPrefix` to `incoming`, redeploy, synchronize Function

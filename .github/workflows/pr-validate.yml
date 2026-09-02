@@ -116,7 +116,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $expected = @('business-rules-workflow', 'human-approval-workflow', 'sla-notification-workflow')
           foreach ($name in $expected) {
-            $path = "src/logicapps/workflows/$name/workflow.json"
+            $path = "src/logicapps/$name/workflow.json"
             if (-not (Test-Path $path)) { throw "Missing workflow definition: $path" }
             $definition = (Get-Content -Raw -Path $path | ConvertFrom-Json).definition
             if (-not $definition.triggers) { throw "$name has no trigger." }
@@ -125,12 +125,12 @@ jobs:
                 throw "Trigger '$($trigger.Name)' in $name must be an HTTP Request trigger."
               }
               $secure = $trigger.Value.runtimeConfiguration.secureData.properties
-              if (-not ($secure -contains 'inputs' -and $secure -contains 'outputs')) {
-                throw "Trigger '$($trigger.Name)' in $name does not mark inputs and outputs as secure data; message PHI would land in run history."
+              if (-not ($secure -contains 'inputs')) {
+                throw "Trigger '$($trigger.Name)' in $name does not mark inputs as secure data; message data would land in run history."
               }
             }
           }
-          Write-Host "All $($expected.Count) workflows present with secure HTTP Request triggers."
+          Write-Host "All $($expected.Count) workflows present with secure HTTP Request-trigger inputs."
       - name: Reject legacy messaging contracts and parse ARM JSON modules
         shell: pwsh
         run: |

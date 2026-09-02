@@ -49,8 +49,8 @@ output office365ConnectionResourceId string = office365Connection.outputs.resour
 @description('Name of the Office 365 Outlook connection.')
 output office365ConnectionName string = office365Connection.outputs.name
 
-@description('Connector runtime URL placeholder. Office 365 does not populate this property until interactive consent; update the Logic App setting after authorization as documented in docs/runbook.md.')
-output office365ConnectionRuntimeUrl string = ''
+@description('Connector runtime URL populated by Azure after interactive consent. It is empty until the connection has been authorized.')
+output office365ConnectionRuntimeUrl string = reference(resourceId('Microsoft.Web/connections', office365ConnectionName), '2016-06-01', 'full').properties.connectionRuntimeUrl ?? ''
 
 @description('Reminder that this connection requires manual, interactive OAuth consent after deployment before the human-approval-workflow can send mail.')
 output postDeployConsentRequired bool = true

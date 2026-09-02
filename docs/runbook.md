@@ -2,16 +2,16 @@
 
 Environment: `rg-intakeai-dev-swc`, Sweden Central.
 
-The custom `PhiStorage` trigger connection has no queue endpoint. Blob-trigger
-checkpoints and `webjobs-blobtrigger-poison` are in private
-`AzureWebJobsStorage`; use its Queue private endpoint from the test VM. The
-Function identity has Storage Queue Data Contributor on that runtime account.
+`PollIncomingDocuments` lists the configured private Blob prefix every minute
+with the Function application identity. There is no Blob trigger extension or
+PHI poison queue. A failed item is isolated from the rest of the batch and is
+retried by the next timer invocation.
 
 ## Alert response
 
 | Alert | First response |
 |---|---|
-| Blob-trigger poison queue | Inspect `webjobs-blobtrigger-poison` in the private runtime storage account from the test VM. Correlate the blob reference with `dbo.ProcessingInbox`; resolve the registration failure before replaying. Never copy PHI into a ticket or log. |
+| Intake polling failure | Check Application Insights for `SOURCE_POLLING_FAILED` or `SOURCE_POLLING_PARTIAL_FAILURE`, then verify private Blob DNS, Function identity container access, and SQL connectivity. Never copy a blob name or PHI into a ticket or log. |
 | Function or Durable failure | Check Application Insights for the safe error code and `DocumentId`, then verify private DNS, runtime storage, SQL, Key Vault, Blob, and Document Intelligence. |
 | Stale processing item | Query `dbo.ProcessingInbox` for nonterminal rows and compare with Durable instance `document-<DocumentId>`. The reconciliation timer normally restarts a missing or completed instance. |
 | Logic App failure | Locate the secured run by `DocumentId`. Check the callback secret reference, sidecar existence, SQL state, connector health, and `dbo.WorkflowOperations` lease. |
@@ -44,16 +44,16 @@ ORDER BY TimestampUtc DESC;
 
 Do not select `ExtractedFieldsJson` during routine diagnosis.
 
-## Poison notification replay
+## Polling failure recovery
 
 1. Pause the producer for the affected blob name.
-2. Inspect the poison message from the private test VM and identify the exact
-   source blob; do not export its content.
+2. Correlate the safe Function telemetry and recent `ProcessingInbox` rows;
+   do not export blob content or names.
 3. Correct identity, private DNS, SQL, or registration configuration.
 4. If the version already exists in `ProcessingInbox`, let reconciliation start
-   its deterministic Durable instance. Otherwise, copy the exact source version
-   to a new name under the active incoming prefix to create a fresh notification.
-5. Confirm a terminal inbox state, then delete the poison notification.
+   its deterministic Durable instance. Otherwise, leave the source under the
+   active prefix for the next timer poll.
+5. Confirm a terminal inbox state before resuming the producer.
 
 Never overwrite the source to force retry: the registered version ID and ETag
 must continue to identify the bytes originally accepted.
@@ -129,7 +129,7 @@ az storage blob upload `
 Validate:
 
 1. One `ProcessingInbox` row records a nonempty version ID and ETag.
-2. Application Insights shows `DocumentBlobStarter`,
+2. Application Insights shows `PollIncomingDocuments`,
    `DocumentOrchestrator`, and activities without PHI.
 3. The normal fixture reaches `AutoApproved`; the source leaves the incoming
    prefix and appears under `processed/`.
@@ -140,7 +140,7 @@ Validate:
    `failed/`. Reminder/escalation sends only while review remains pending.
 6. Temporarily stopping an orchestration demonstrates that the reconciliation
    timer restarts it. Use a synthetic item only.
-7. Runtime storage `webjobs-blobtrigger-poison` remains empty.
+7. Application Insights has no polling partial-failure telemetry.
 
 Never test with real PHI.
 

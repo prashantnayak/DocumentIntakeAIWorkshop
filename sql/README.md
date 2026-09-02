@@ -15,7 +15,9 @@ Get-ChildItem .\sql\migrations\*.sql | Sort-Object Name | ForEach-Object {
 ```
 
 `scripts/post-deploy.ps1` substitutes the deployed managed-identity and Entra
-group names while applying the same ordered set.
+group names and object-ID SIDs while applying the same ordered set. Explicit
+SIDs let migration 004 create external users without granting Microsoft Graph
+directory permissions to the SQL logical server identity.
 
 ## Migrations
 

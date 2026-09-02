@@ -50,7 +50,7 @@ param contentShareName string
 @description('Resource ID of the Logic App user-assigned identity (SQL Server built-in connector + HTTP/Graph calls).')
 param logicAppIdentityResourceId string
 
-@description('Client ID of the Logic App user-assigned identity. Used for the host-level AzureWebJobsStorage connection, which -- unlike the workflow-level built-in Blob connector -- fully supports user-assigned identity (see docs/COMPLIANCE.md).')
+@description('Client ID of the Logic App user-assigned identity. Used for Application Insights and SQL; the Logic Apps Standard host-storage exception is documented in docs/COMPLIANCE.md.')
 param logicAppIdentityClientId string
 
 @minValue(1)
@@ -166,6 +166,11 @@ module site 'br/public:avm/res/web/site:0.24.0' = {
       ]
     }
     virtualNetworkSubnetResourceId: logicAppSubnetResourceId
+    outboundVnetRouting: {
+      allTraffic: true
+      contentShareTraffic: true
+      imagePullTraffic: true
+    }
     storageAccountRequired: false
     clientAffinityEnabled: false
     publicNetworkAccess: 'Disabled'
@@ -203,53 +208,33 @@ module site 'br/public:avm/res/web/site:0.24.0' = {
           use32BitWorkerProcess: false
           alwaysOn: true
           http20Enabled: true
-          vnetRouteAllEnabled: true
         }
       }
       {
         name: 'appsettings'
-        // Identity-based AzureWebJobsStorage and Application Insights
-        // ingestion are auto-wired by the module from
-        // storageAccountResourceId/storageAccountUseIdentityAuthentication
-        // and applicationInsightResourceId below -- AzureWebJobsStorage,
-        // AzureWebJobsDashboard, APPINSIGHTS_INSTRUMENTATIONKEY, and
-        // APPLICATIONINSIGHTS_CONNECTION_STRING must NOT be set in
-        // properties (the module rejects/overwrites them).
+        // Application Insights and AzureWebJobsStorage are auto-wired by the
+        // module. Logic Apps Standard's workflow-state provider still parses a
+        // classic AzureWebJobsStorage connection string and fails at startup
+        // with identity-only host storage. Keep this exception confined to the
+        // non-PHI runtime account; workflow data connections remain
+        // identity-based. AzureWebJobsStorage and the Application Insights
+        // connection settings must not be repeated in properties because the
+        // module generates them.
         storageAccountResourceId: hostStorageAccountResourceId
-        storageAccountUseIdentityAuthentication: true
+        storageAccountUseIdentityAuthentication: false
         applicationInsightResourceId: appInsightsResourceId
         properties: {
           APP_KIND: 'workflowApp'
           FUNCTIONS_EXTENSION_VERSION: '~4'
-          FUNCTIONS_WORKER_RUNTIME: 'node'
-          WEBSITE_NODE_DEFAULT_VERSION: '~20'
+          FUNCTIONS_WORKER_RUNTIME: 'dotnet'
           // Application Insights ingestion uses this Logic App's
           // user-assigned identity (Monitoring Metrics Publisher role)
           // because disableLocalAuth=true on the Application Insights
           // component.
           APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD;ClientId=${logicAppIdentityClientId}'
           WEBSITE_CONTENTSHARE: contentShareName
-          // Logic Apps Standard is deployed with zip deploy (the documented,
-          // supported path for this resource type -- unlike Azure Functions it
-          // does not support running from an external package URL), so the
-          // package is mounted read-only from the content share. Declared here
-          // so an infrastructure redeployment never drops the setting the
-          // code-deploy job depends on.
-          WEBSITE_RUN_FROM_PACKAGE: '1'
           // Narrow, documented Shared Key exception -- see storage-runtime.bicep.
           WEBSITE_CONTENTAZUREFILECONNECTIONSTRING: 'DefaultEndpointsProtocol=https;AccountName=${hostStorageAccountName};AccountKey=${hostStorageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
-          WEBSITE_CONTENTOVERVNET: '1'
-          // The module auto-generates AzureWebJobsStorage__accountName plus
-          // blob/queue/table service URIs, but does not select which
-          // identity to use -- explicitly select the Logic App's
-          // USER-ASSIGNED identity here. This is the host-level WebJobs SDK
-          // storage connection (trigger/lease state), which is distinct
-          // from -- and fully supports user-assigned identity unlike -- the
-          // workflow-level built-in Azure Blob connector used inside workflow
-          // definitions (it requires system-assigned; see
-          // docs/COMPLIANCE.md and modules/storage-container-role-assignment.bicep).
-          AzureWebJobsStorage__credential: 'managedidentity'
-          AzureWebJobsStorage__clientId: logicAppIdentityClientId
           // Workflow parameter surface (parameters.json reads these via
           // @appsetting(...) so rule values change without redeploying workflows).
           BusinessRules_ConfidenceThreshold: confidenceThreshold
