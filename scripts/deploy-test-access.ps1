@@ -5,7 +5,9 @@
 .DESCRIPTION
     Reuses the validated subscription-scoped infrastructure template, enables
     only the optional test-access resources, generates a temporary local-admin
-    password, and grants the signed-in Entra user VM Administrator Login.
+    password, grants the signed-in Entra user VM Administrator Login, and grants
+    storage-account-scoped Blob Data Contributor so Azure Portal Storage Browser
+    can list the private PHI account's containers and upload synthetic fixtures.
     The password is copied to the Windows clipboard and is never written to the
     repository or emitted as an ARM deployment output.
 #>
@@ -72,10 +74,38 @@ try {
 
         if ($LASTEXITCODE -ne 0) { throw "Deployment '$deploymentName' failed." }
 
+        $phiStorageAccountResourceId = az deployment sub show `
+            --name $deploymentName `
+            --subscription $SubscriptionId `
+            --query properties.outputs.phiStorageAccountResourceId.value `
+            --output tsv
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($phiStorageAccountResourceId)) {
+            throw "Deployment '$deploymentName' did not return the PHI storage account resource ID."
+        }
+
+        $portalDataRole = az role assignment list `
+            --assignee-object-id $administratorObjectId `
+            --scope $phiStorageAccountResourceId `
+            --include-inherited `
+            --query "[?roleDefinitionName == 'Storage Blob Data Contributor' && scope == '$phiStorageAccountResourceId'].id | [0]" `
+            --output tsv
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the workshop operator storage role assignment.' }
+
+        if ([string]::IsNullOrWhiteSpace($portalDataRole)) {
+            az role assignment create `
+                --assignee-object-id $administratorObjectId `
+                --assignee-principal-type User `
+                --role 'Storage Blob Data Contributor' `
+                --scope $phiStorageAccountResourceId `
+                --output none
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to grant Azure Portal Blob data access to the workshop operator.' }
+        }
+
         Set-Clipboard -Value $temporaryPassword
         Write-Host "Deployment '$deploymentName' succeeded." -ForegroundColor Green
         Write-Host 'Temporary local-admin password copied to your clipboard.' -ForegroundColor Yellow
         Write-Host 'Username: testadmin'
+        Write-Host 'Azure Portal Blob data access granted to the signed-in Entra user.'
         Write-Host 'Connect in Azure portal: Virtual machine -> Connect -> Bastion.'
     }
 }

@@ -115,6 +115,12 @@ Connect through Azure portal **Bastion**. The VM has no public IP. Clone or copy
 the repository's synthetic fixtures to the VM, sign in with `az login`, and use
 Entra authentication:
 
+`deploy-test-access.ps1` grants the signed-in workshop operator
+`Storage Blob Data Contributor` at the PHI storage-account scope. The
+account-level scope is required for Azure Portal Storage Browser to list
+containers before opening `documents`; the storage firewall still requires the
+browser session to run from the private test VM.
+
 ```powershell
 $prefix = 'incoming'
 az storage blob upload `
