@@ -1,0 +1,155 @@
+name: Destroy
+
+# Manual-only, destructive teardown. Requires typing the exact resource
+# group name twice (once as a distinct input, once as a confirmation) and
+# is hard-blocked from ever targeting an environment named "prod", even if
+# a future edit adds "prod" to the choice list below without updating this
+# guard. Only "dev" exists today (see docs/ASSUMPTIONS.md).
+#
+# infra/main.bicep is SUBSCRIPTION-scoped: besides the resource group it can
+# also create a subscription-scoped HIPAA/HITRUST policy assignment and change
+# subscription-wide Microsoft Defender for Cloud pricing plans. `az group
+# delete` removes neither, so this workflow explicitly cleans up the policy
+# assignment and reports the Defender plan state instead of silently leaving
+# subscription-level residue behind.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (only "dev" is in scope for this workshop -- see docs/ASSUMPTIONS.md)'
+        type: choice
+        options:
+          - dev
+        default: dev
+        required: true
+      resource_group_name:
+        description: 'Exact resource group name to delete (e.g. rg-intakeai-dev-eus2)'
+        type: string
+        required: true
+      confirm_resource_group_name:
+        description: 'Type the resource group name again to confirm irreversible deletion'
+        type: string
+        required: true
+      remove_policy_assignment:
+        description: 'Also remove the subscription-scoped HIPAA/HITRUST policy assignment created by this workload (only affects the assignment named hipaa-hitrust-intakeai)'
+        type: boolean
+        default: true
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Destroy (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      # Indirection through job-level env vars (rather than interpolating
+      # ${{ inputs.* }} directly into script bodies) avoids shell/PowerShell
+      # parsing ambiguity and follows GitHub's documented guidance for
+      # safely handling user-supplied workflow_dispatch input.
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
+      RESOURCE_GROUP_NAME: ${{ inputs.resource_group_name }}
+      CONFIRM_RESOURCE_GROUP_NAME: ${{ inputs.confirm_resource_group_name }}
+      REMOVE_POLICY_ASSIGNMENT: ${{ inputs.remove_policy_assignment }}
+      POLICY_ASSIGNMENT_NAME: hipaa-hitrust-intakeai
+    steps:
+      - name: Hard guard -- never destroy an environment named 'prod'
+        run: |
+          if [ "$TARGET_ENVIRONMENT" = "prod" ]; then
+            echo "::error::Refusing to run destroy.yml against an environment named 'prod', regardless of the choice list. This guard is intentionally not configurable via workflow inputs."
+            exit 1
+          fi
+
+      - name: Validate confirmation matches the target resource group exactly
+        run: |
+          if [ "$CONFIRM_RESOURCE_GROUP_NAME" != "$RESOURCE_GROUP_NAME" ]; then
+            echo "::error::Confirmation input '$CONFIRM_RESOURCE_GROUP_NAME' does not exactly match resource_group_name '$RESOURCE_GROUP_NAME'. Aborting without deleting anything."
+            exit 1
+          fi
+
+      - name: Azure login (OIDC, no client secret)
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Confirm the resource group exists and list its contents (for the record)
+        run: |
+          set -euo pipefail
+          if ! az group show --name "$RESOURCE_GROUP_NAME" >/dev/null 2>&1; then
+            echo "::error::Resource group '$RESOURCE_GROUP_NAME' does not exist (or this identity cannot see it). Nothing to destroy -- aborting."
+            exit 1
+          fi
+          echo "Resources currently in '$RESOURCE_GROUP_NAME':"
+          az resource list --resource-group "$RESOURCE_GROUP_NAME" -o table | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Record the Key Vault names that will need a separate purge decision
+        run: |
+          set -euo pipefail
+          az keyvault list --resource-group "$RESOURCE_GROUP_NAME" --query "[].name" -o tsv > key-vaults.txt || true
+          echo "Key Vaults in this resource group (purge protection is enabled on them by design):"
+          cat key-vaults.txt
+
+      - name: Remove the subscription-scoped policy assignment (if it exists)
+        run: |
+          set -euo pipefail
+          if [ "$REMOVE_POLICY_ASSIGNMENT" != "true" ]; then
+            echo "remove_policy_assignment=false -- leaving any subscription-scoped policy assignment in place."
+            exit 0
+          fi
+          scope="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          if az policy assignment show --name "$POLICY_ASSIGNMENT_NAME" --scope "$scope" >/dev/null 2>&1; then
+            az policy assignment delete --name "$POLICY_ASSIGNMENT_NAME" --scope "$scope"
+            echo "Deleted subscription-scoped policy assignment '$POLICY_ASSIGNMENT_NAME'." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No subscription-scoped policy assignment named '$POLICY_ASSIGNMENT_NAME' found (governance.enableHipaaHitrustPolicy was probably false). Nothing to remove."
+          fi
+
+      - name: Report Microsoft Defender for Cloud plan state (never auto-reverted)
+        run: |
+          set -euo pipefail
+          # Defender plans are SUBSCRIPTION-WIDE. Turning them off here could
+          # disable protection for unrelated workloads that share this
+          # subscription, and Azure does not record who enabled a plan or what
+          # it was set to beforehand, so an automated "revert" would be a
+          # guess. Report the current state and let a human decide.
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Microsoft Defender for Cloud plan state (subscription-wide -- NOT changed by this workflow)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Plan | Pricing tier |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for plan in StorageAccounts SqlServers AppServices KeyVaults Arm Dns; do
+            tier="$(az security pricing show --name "$plan" --query pricingTier -o tsv 2>/dev/null || echo 'unknown')"
+            echo "| $plan | $tier |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "If \`governance.enableDefenderForCloud\` was true for this workload and these plans were **Standard only because of it**, revert them deliberately with \`az security pricing create --name <plan> --tier Free\`. Do NOT revert without confirming no other workload in this subscription depends on them." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: az group delete (blocking, irreversible)
+        run: |
+          set -euo pipefail
+          az group delete --name "$RESOURCE_GROUP_NAME" --yes
+          echo "Resource group '$RESOURCE_GROUP_NAME' deleted." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Post-destroy reminder
+        if: success()
+        run: |
+          {
+            echo ""
+            echo "### Manual follow-up after destroy"
+            echo ""
+            echo "- **Key Vault (purge protection is ENABLED by design).** Soft-deleted vaults are not removed by \`az group delete\`, and with purge protection on they **cannot be purged early** -- \`az keyvault purge\` is rejected until the full soft-delete retention window (\`keyVaultSoftDeleteRetentionDays\`, 90 days for dev) has elapsed. This is a deliberate, non-overridable Azure behaviour, not a permissions problem. Until then the vault name stays reserved, so a redeploy must either use a different name or wait; \`az keyvault recover --name <name>\` restores the original vault (and its CMKs) in place if you want to redeploy over it instead. Vault names captured in this run:"
+            if [ -s key-vaults.txt ]; then sed 's/^/  - /' key-vaults.txt; else echo "  - (none found)"; fi
+            echo "- The Entra ID app registration, its federated credential, and its subscription-scoped Contributor / RBAC Administrator role assignments created by \`scripts/bootstrap.ps1\` are NOT removed by this workflow. Remove them separately (\`Remove-AzADApplication\`, \`Remove-AzRoleAssignment\`) if the environment is being permanently decommissioned."
+            echo "- SQL Server long-term retention (LTR) backups are stored independently of the logical server/database and are NOT deleted by \`az group delete\`. Review and clean up LTR backups separately if they are no longer needed."
+          } >> "$GITHUB_STEP_SUMMARY"

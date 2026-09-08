@@ -1,0 +1,45 @@
+{
+  "serviceProviderConnections": {
+    "sql": {
+      "displayName": "intake-sql",
+      "parameterValues": {
+        "serverName": "@appsetting('Sql_DataSource')",
+        "databaseName": "@appsetting('Sql_InitialCatalog')",
+        "managedIdentityType": "UserAssigned",
+        "managedIdentityClientId": "@appsetting('Sql_UserAssignedIdentityClientId')",
+        "authProvider": {
+          "Type": "ManagedServiceIdentity"
+        }
+      },
+      "parameterSetName": "ManagedServiceIdentity",
+      "serviceProvider": {
+        "id": "/serviceProviders/sql"
+      }
+    },
+    "AzureBlob": {
+      "displayName": "intake-phi-blob",
+      "parameterValues": {
+        "blobStorageEndpoint": "@appsetting('PhiStorage_BlobServiceUri')",
+        "authProvider": {
+          "Type": "ManagedServiceIdentity"
+        }
+      },
+      "parameterSetName": "ManagedServiceIdentity",
+      "serviceProvider": {
+        "id": "/serviceProviders/AzureBlob"
+      }
+    }
+  },
+  "managedApiConnections": {
+    "office365": {
+      "api": {
+        "id": "/subscriptions/@{appsetting('WORKFLOWS_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('WORKFLOWS_LOCATION_NAME')}/managedApis/office365"
+      },
+      "connection": {
+        "id": "@appsetting('Office365_ConnectionResourceId')"
+      },
+      "connectionRuntimeUrl": "@parameters('office365-ConnectionRuntimeUrl')",
+      "authentication": "@parameters('office365-Authentication')"
+    }
+  }
+}

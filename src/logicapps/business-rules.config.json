@@ -1,0 +1,66 @@
+{
+  "description": "Authoritative source-of-truth for the business-rules workflow's parameterized gates. These values are deployed as Logic App settings via infra/params/*.bicepparam (businessRules parameter) -- edit them there for a real deployment. This file documents the same values in one human-readable place per the confirmed requirement that rules must be changeable via config, not code, and is also used by tests/ps-rule and local workflow authoring to keep expectations in sync with what Bicep deploys.",
+  "rules": [
+    {
+      "id": "ConfidenceGate",
+      "description": "Classification confidence below this threshold always routes to human review.",
+      "appSetting": "BusinessRules_ConfidenceThreshold",
+      "defaultValue": "0.85",
+      "valueType": "decimal-as-string (0.0-1.0)"
+    },
+    {
+      "id": "DocumentTypeGate",
+      "description": "Configured high-risk document types always route to human review regardless of confidence.",
+      "appSetting": "BusinessRules_HighRiskDocumentTypesJson",
+      "defaultValue": ["Consent Form", "Advance Directive", "Prior Authorization"],
+      "valueType": "JSON string array"
+    },
+    {
+      "id": "RequiredFieldsGate",
+      "description": "If any mandatory extracted field is missing or empty, route to human review.",
+      "appSetting": "BusinessRules_RequiredFieldsJson",
+      "defaultValue": ["PatientIdentifier", "DateOfService", "Provider"],
+      "valueType": "JSON string array"
+    },
+    {
+      "id": "DuplicateCheck",
+      "description": "If a document hash already exists in Azure SQL, mark as duplicate and skip persistence. Evaluated by the Function (IngressProcessingFunction) before anything is queued, not by this workflow -- see docs/ASSUMPTIONS.md.",
+      "appSetting": "n/a (Function-only; SHA-256 hash uniqueness enforced by dbo.IdempotencyLedger)",
+      "defaultValue": null,
+      "valueType": "n/a"
+    },
+    {
+      "id": "UnreadableCheck",
+      "description": "If Document Intelligence reports zero pages/zero extracted content, route to failed/ with an alert. Evaluated by the Function before anything is queued, not by this workflow -- see docs/ASSUMPTIONS.md.",
+      "appSetting": "n/a (Function-only)",
+      "defaultValue": null,
+      "valueType": "n/a"
+    },
+    {
+      "id": "ReviewReminder",
+      "description": "A review item unactioned after this many hours receives a reminder notification to the reviewer group. The stateful human-approval workflow uses a durable delay and then invokes the local SLA workflow.",
+      "appSetting": "BusinessRules_ReviewReminderAfterHours",
+      "defaultValue": 24,
+      "valueType": "integer (hours)"
+    },
+    {
+      "id": "ReviewEscalation",
+      "description": "A review item unactioned after this many hours escalates to the supervisor group through a durable delay and local SLA workflow invocation. Must be greater than ReviewReminder, and sasLinkExpiryHours must be >= this value so the escalated supervisor's document link has not already expired.",
+      "appSetting": "BusinessRules_ReviewEscalationAfterHours",
+      "defaultValue": 72,
+      "valueType": "integer (hours)"
+    },
+    {
+      "id": "ReviewerLinkExpiry",
+      "description": "Hours a reviewer's read-only user-delegation SAS link stays valid. Must be >= ReviewEscalation. Capped at 168 because a user delegation key is valid for at most 7 days. The link only resolves from a VNet-connected endpoint -- see docs/runbook.md.",
+      "appSetting": "BusinessRules_AccessLinkExpiryHours",
+      "defaultValue": 72,
+      "valueType": "integer (hours)"
+    }
+  ],
+  "ownership": {
+    "authoritative": "business-rules-workflow (this Logic App)",
+    "fallback": "src/functions Services/DeterministicRoutingRuleEvaluator.cs computes the same ConfidenceGate/DocumentTypeGate/RequiredFieldsGate using identical app-setting values as a pre-routing signal and resiliency fallback only. The business-rules workflow re-evaluates authoritatively and its decision is what is persisted. Both evaluate DocumentTypeGate as EXACT array membership -- the workflow parses highRiskDocumentTypesJson into an array first rather than substring-matching the raw JSON string.",
+    "changeProcedure": "Update the businessRules parameter in the relevant infra/params/<env>.bicepparam file and redeploy infra (no code or workflow-definition changes required). Update this file in the same pull request so the documented defaults stay in sync."
+  }
+}

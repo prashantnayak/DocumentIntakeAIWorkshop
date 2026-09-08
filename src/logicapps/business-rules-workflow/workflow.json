@@ -1,0 +1,316 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "2.0.0.0",
+    "parameters": {
+      "confidenceThreshold": { "type": "string" },
+      "highRiskDocumentTypesJson": { "type": "string" },
+      "phiContainerName": { "type": "string" }
+    },
+    "triggers": {
+      "Receive_processing_request": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "object",
+            "required": ["documentId", "sidecarBlobName"],
+            "properties": {
+              "documentId": { "type": "string", "format": "uuid" },
+              "sidecarBlobName": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "runtimeConfiguration": {
+          "secureData": {
+            "properties": ["inputs"]
+          }
+        }
+      }
+    },
+    "actions": {
+      "Read_processing_sidecar": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "containerName": "@parameters('phiContainerName')",
+            "blobName": "@triggerBody()?['sidecarBlobName']"
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "AzureBlob",
+            "operationId": "readBlob",
+            "serviceProviderId": "/serviceProviders/AzureBlob"
+          }
+        },
+        "runAfter": {},
+        "runtimeConfiguration": {
+          "secureData": {
+            "properties": ["inputs"]
+          }
+        }
+      },
+      "Parse_processing_sidecar": {
+        "type": "Compose",
+        "inputs": "@body('Read_processing_sidecar')?['content']",
+        "runAfter": {
+          "Read_processing_sidecar": ["Succeeded"]
+        }
+      },
+      "Validate_document_identity": {
+        "type": "If",
+        "expression": {
+          "and": [
+            {
+              "equals": [
+                "@outputs('Parse_processing_sidecar')?['documentId']",
+                "@triggerBody()?['documentId']"
+              ]
+            }
+          ]
+        },
+        "actions": {
+          "Compose_authoritative_outcome": {
+            "type": "Compose",
+            "inputs": {
+              "outcome": "@{if(less(float(outputs('Parse_processing_sidecar')?['confidence']), float(parameters('confidenceThreshold'))), 'ReviewRequired', if(contains(json(parameters('highRiskDocumentTypesJson')), outputs('Parse_processing_sidecar')?['documentType']), 'ReviewRequired', if(greater(length(outputs('Parse_processing_sidecar')?['missingRequiredFields']), 0), 'ReviewRequired', 'AutoApproved')))}",
+              "ruleFired": "@{if(less(float(outputs('Parse_processing_sidecar')?['confidence']), float(parameters('confidenceThreshold'))), 'ConfidenceGate', if(contains(json(parameters('highRiskDocumentTypesJson')), outputs('Parse_processing_sidecar')?['documentType']), 'DocumentTypeGate', if(greater(length(outputs('Parse_processing_sidecar')?['missingRequiredFields']), 0), 'RequiredFieldsGate', 'None')))}"
+            },
+            "runAfter": {}
+          },
+          "Branch_on_authoritative_outcome": {
+            "type": "If",
+            "expression": {
+              "and": [
+                {
+                  "equals": [
+                    "@outputs('Compose_authoritative_outcome')?['outcome']",
+                    "AutoApproved"
+                  ]
+                }
+              ]
+            },
+            "actions": {
+              "Persist_auto_approved_document": {
+                "type": "ServiceProvider",
+                "inputs": {
+                  "parameters": {
+                    "query": "INSERT INTO dbo.Documents (DocumentId, DocumentHash, BlobName, DocumentType, Confidence, PatientIdentifier, DateOfService, Provider, ExtractedFieldsJson, ApprovedBy, ApprovedAtUtc) SELECT @DocumentId, @DocumentHash, @BlobName, @DocumentType, @Confidence, JSON_VALUE(@ExtractedFieldsJson, '$.PatientIdentifier'), JSON_VALUE(@ExtractedFieldsJson, '$.DateOfService'), JSON_VALUE(@ExtractedFieldsJson, '$.Provider'), @ExtractedFieldsJson, 'system-auto-approve', SYSUTCDATETIME() WHERE NOT EXISTS (SELECT 1 FROM dbo.Documents WHERE DocumentId = @DocumentId); INSERT INTO dbo.DecisionTrail (DocumentId, DocumentHash, BlobName, Stage, ClassifierVersion, Confidence, RuleFired, Outcome, ApproverIdentity, TimestampUtc) SELECT @DocumentId, @DocumentHash, @BlobName, 'BusinessRules', @ClassifierVersion, @Confidence, @RuleFired, 'AutoApproved', 'system-auto-approve', SYSUTCDATETIME() WHERE NOT EXISTS (SELECT 1 FROM dbo.DecisionTrail WHERE DocumentId = @DocumentId AND Outcome = 'AutoApproved');",
+                    "queryParameters": {
+                      "DocumentId": "@outputs('Parse_processing_sidecar')?['documentId']",
+                      "DocumentHash": "@outputs('Parse_processing_sidecar')?['documentHash']",
+                      "BlobName": "@outputs('Parse_processing_sidecar')?['blobName']",
+                      "DocumentType": "@outputs('Parse_processing_sidecar')?['documentType']",
+                      "Confidence": "@outputs('Parse_processing_sidecar')?['confidence']",
+                      "ClassifierVersion": "@outputs('Parse_processing_sidecar')?['classifierVersion']",
+                      "RuleFired": "@outputs('Compose_authoritative_outcome')?['ruleFired']",
+                      "ExtractedFieldsJson": "@string(outputs('Parse_processing_sidecar')?['requiredFieldValues'])"
+                    }
+                  },
+                  "serviceProviderConfiguration": {
+                    "connectionName": "sql",
+                    "operationId": "executeQuery",
+                    "serviceProviderId": "/serviceProviders/sql"
+                  }
+                },
+                "runAfter": {},
+                "runtimeConfiguration": {
+                  "secureData": {
+                    "properties": ["inputs"]
+                  }
+                }
+              },
+              "Read_source_blob": {
+                "type": "Http",
+                "inputs": {
+                  "method": "GET",
+                  "uri": "@outputs('Parse_processing_sidecar')?['accessLinkUrl']"
+                },
+                "runAfter": {
+                  "Persist_auto_approved_document": ["Succeeded"]
+                },
+                "runtimeConfiguration": {
+                  "secureData": {
+                    "properties": ["inputs", "outputs"]
+                  }
+                }
+              },
+              "Write_processed_blob": {
+                "type": "ServiceProvider",
+                "inputs": {
+                  "parameters": {
+                    "containerName": "@parameters('phiContainerName')",
+                    "blobName": "@concat('processed/', last(split(outputs('Parse_processing_sidecar')?['blobName'], '/')))",
+                    "content": "@body('Read_source_blob')"
+                  },
+                  "serviceProviderConfiguration": {
+                    "connectionName": "AzureBlob",
+                    "operationId": "uploadBlob",
+                    "serviceProviderId": "/serviceProviders/AzureBlob"
+                  }
+                },
+                "runAfter": {
+                  "Read_source_blob": ["Succeeded"]
+                },
+                "runtimeConfiguration": {
+                  "secureData": {
+                    "properties": ["inputs", "outputs"]
+                  }
+                }
+              },
+              "Complete_auto_approval_state": {
+                "type": "ServiceProvider",
+                "inputs": {
+                  "parameters": {
+                    "query": "EXEC dbo.usp_UpdateProcessingState @DocumentId=@DocumentId, @State='AutoApproved', @ExpectedState='Ready', @ClearPayload=1;",
+                    "queryParameters": {
+                      "DocumentId": "@outputs('Parse_processing_sidecar')?['documentId']"
+                    }
+                  },
+                  "serviceProviderConfiguration": {
+                    "connectionName": "sql",
+                    "operationId": "executeQuery",
+                    "serviceProviderId": "/serviceProviders/sql"
+                  }
+                },
+                "runAfter": {
+                  "Write_processed_blob": ["Succeeded"]
+                }
+              },
+              "Return_auto_approved": {
+                "type": "Response",
+                "kind": "Http",
+                "inputs": {
+                  "statusCode": 202,
+                  "body": {
+                    "documentId": "@triggerBody()?['documentId']",
+                    "outcome": "AutoApproved"
+                  }
+                },
+                "runAfter": {
+                  "Complete_auto_approval_state": ["Succeeded"]
+                },
+                "runtimeConfiguration": {
+                  "secureData": {
+                    "properties": ["inputs"]
+                  }
+                }
+              },
+              "Delete_auto_approved_sidecar": {
+                "type": "ServiceProvider",
+                "inputs": {
+                  "parameters": {
+                    "containerName": "@parameters('phiContainerName')",
+                    "blobName": "@triggerBody()?['sidecarBlobName']"
+                  },
+                  "serviceProviderConfiguration": {
+                    "connectionName": "AzureBlob",
+                    "operationId": "deleteBlob",
+                    "serviceProviderId": "/serviceProviders/AzureBlob"
+                  }
+                },
+                "runAfter": {
+                  "Return_auto_approved": ["Succeeded"]
+                }
+              }
+            },
+            "else": {
+              "actions": {
+                "Mark_review_pending": {
+                  "type": "ServiceProvider",
+                  "inputs": {
+                    "parameters": {
+                      "query": "EXEC dbo.usp_UpdateProcessingState @DocumentId=@DocumentId, @State='ReviewPending', @ExpectedState='Ready';",
+                      "queryParameters": {
+                        "DocumentId": "@outputs('Parse_processing_sidecar')?['documentId']"
+                      }
+                    },
+                    "serviceProviderConfiguration": {
+                      "connectionName": "sql",
+                      "operationId": "executeQuery",
+                      "serviceProviderId": "/serviceProviders/sql"
+                    }
+                  },
+                  "runAfter": {}
+                },
+                "Invoke_human_approval": {
+                  "type": "Workflow",
+                  "inputs": {
+                    "host": {
+                      "workflow": {
+                        "id": "human-approval-workflow"
+                      }
+                    },
+                    "body": {
+                      "documentId": "@outputs('Parse_processing_sidecar')?['documentId']",
+                      "blobName": "@outputs('Parse_processing_sidecar')?['blobName']",
+                      "documentHash": "@outputs('Parse_processing_sidecar')?['documentHash']",
+                      "documentType": "@outputs('Parse_processing_sidecar')?['documentType']",
+                      "confidence": "@outputs('Parse_processing_sidecar')?['confidence']",
+                      "classifierVersion": "@outputs('Parse_processing_sidecar')?['classifierVersion']",
+                      "requiredFieldValues": "@outputs('Parse_processing_sidecar')?['requiredFieldValues']",
+                      "missingRequiredFields": "@outputs('Parse_processing_sidecar')?['missingRequiredFields']",
+                      "accessLinkUrl": "@outputs('Parse_processing_sidecar')?['accessLinkUrl']",
+                      "accessLinkExpiresOn": "@outputs('Parse_processing_sidecar')?['accessLinkExpiresOn']",
+                      "sidecarBlobName": "@triggerBody()?['sidecarBlobName']"
+                    }
+                  },
+                  "runAfter": {
+                    "Mark_review_pending": ["Succeeded"]
+                  },
+                  "runtimeConfiguration": {
+                    "secureData": {
+                      "properties": ["inputs", "outputs"]
+                    }
+                  },
+                  "Return_review_routed": {
+                    "type": "Response",
+                    "kind": "Http",
+                    "inputs": {
+                      "statusCode": 202,
+                      "body": {
+                        "documentId": "@triggerBody()?['documentId']",
+                        "outcome": "ReviewRequired"
+                      }
+                    },
+                    "runAfter": {
+                      "Invoke_human_approval": ["Succeeded"]
+                    },
+                    "runtimeConfiguration": {
+                      "secureData": {
+                        "properties": ["inputs", "outputs"]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "runAfter": {
+              "Compose_authoritative_outcome": ["Succeeded"]
+            }
+          }
+        },
+        "else": {
+          "actions": {
+            "Reject_identity_mismatch": {
+              "type": "Response",
+              "kind": "Http",
+              "inputs": {
+                "statusCode": 409,
+                "body": {
+                  "error": "SidecarDocumentIdMismatch"
+                }
+              },
+              "runAfter": {}
+            }
+          }
+        },
+        "runAfter": {
+          "Parse_processing_sidecar": ["Succeeded"]
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "kind": "Stateful"
+}

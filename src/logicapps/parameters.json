@@ -1,0 +1,64 @@
+{
+  "office365-ConnectionRuntimeUrl": {
+    "type": "string",
+    "value": "@appsetting('Office365_ConnectionRuntimeUrl')"
+  },
+  "office365-Authentication": {
+    "type": "object",
+    "value": {
+      "type": "ManagedServiceIdentity"
+    }
+  },
+  "reviewerGroupEmail": {
+    "type": "string",
+    "value": "@appsetting('Reviewer_GroupEmail')"
+  },
+  "supervisorGroupEmail": {
+    "type": "string",
+    "value": "@appsetting('Supervisor_GroupEmail')"
+  },
+  "confidenceThreshold": {
+    "type": "string",
+    "value": "@appsetting('BusinessRules_ConfidenceThreshold')"
+  },
+  "highRiskDocumentTypesJson": {
+    "type": "string",
+    "value": "@appsetting('BusinessRules_HighRiskDocumentTypesJson')"
+  },
+  "requiredFieldsJson": {
+    "type": "string",
+    "value": "@appsetting('BusinessRules_RequiredFieldsJson')"
+  },
+  "reviewReminderAfterHours": {
+    "type": "string",
+    "value": "@appsetting('BusinessRules_ReviewReminderAfterHours')"
+  },
+  "reviewEscalationAfterHours": {
+    "type": "string",
+    "value": "@appsetting('BusinessRules_ReviewEscalationAfterHours')"
+  },
+  "accessLinkExpiryHours": {
+    "type": "string",
+    "value": "@appsetting('BusinessRules_AccessLinkExpiryHours')"
+  },
+  "phiContainerName": {
+    "type": "string",
+    "value": "@appsetting('PhiStorage_ContainerName')"
+  },
+  "sharePointArchiveEnabled": {
+    "type": "string",
+    "value": "@appsetting('SharePointArchive_Enabled')"
+  },
+  "sharePointSiteId": {
+    "type": "string",
+    "value": "@appsetting('SharePointArchive_SiteId')"
+  },
+  "sharePointDriveId": {
+    "type": "string",
+    "value": "@appsetting('SharePointArchive_DriveId')"
+  },
+  "sharePointFolderPath": {
+    "type": "string",
+    "value": "@appsetting('SharePointArchive_FolderPath')"
+  }
+}

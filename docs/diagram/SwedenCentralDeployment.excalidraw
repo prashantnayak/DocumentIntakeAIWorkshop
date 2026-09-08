@@ -1,0 +1,69 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "github-copilot",
+  "elements": [
+    {"type":"text","id":"title","x":40,"y":20,"width":1120,"height":70,"text":"Document Intake AI - Sweden Central Deployment","fontSize":28,"fontFamily":2,"strokeColor":"#000000","textAlign":"left","verticalAlign":"top"},
+    {"type":"rectangle","id":"subscription","x":20,"y":90,"width":1540,"height":850,"strokeColor":"#0078D4","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":3,"roundness":{"type":3}},
+    {"type":"text","id":"subscription-label","x":40,"y":100,"width":1050,"height":50,"text":"Azure subscription / rg-intakeai-dev-swc / Sweden Central","fontSize":18,"fontFamily":2,"strokeColor":"#000000","textAlign":"left","verticalAlign":"top"},
+    {"type":"rectangle","id":"vnet","x":40,"y":150,"width":1020,"height":650,"strokeColor":"#107C10","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"vnet-label","x":60,"y":160,"width":750,"height":50,"text":"vnet-intakeai-dev-swc (10.60.0.0/16)","fontSize":18,"fontFamily":2,"strokeColor":"#000000","textAlign":"left","verticalAlign":"top"},
+
+    {"type":"rectangle","id":"test-container","x":60,"y":210,"width":220,"height":220,"strokeColor":"#5C2D91","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"test-label","x":75,"y":220,"width":190,"height":70,"text":"Optional test access\nsnet-test-vm 10.60.2.0/24","fontSize":15,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"top"},
+    {"type":"rectangle","id":"bastion","x":85,"y":290,"width":170,"height":50,"strokeColor":"#5C2D91","backgroundColor":"#E8DAEF","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"bastion-text","x":95,"y":298,"width":150,"height":38,"text":"Bastion Developer","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"rectangle","id":"vm","x":85,"y":360,"width":170,"height":55,"strokeColor":"#5C2D91","backgroundColor":"#E8DAEF","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"vm-text","x":92,"y":365,"width":156,"height":70,"text":"Windows test VM\nprivate IP only","fontSize":13,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"arrow","id":"bastion-vm","x":170,"y":340,"width":0,"height":20,"strokeColor":"#5C2D91","strokeWidth":2,"points":[[0,0],[0,20]]},
+
+    {"type":"rectangle","id":"phi-storage","x":330,"y":220,"width":190,"height":80,"strokeColor":"#0078D4","backgroundColor":"#CFE4FA","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"phi-storage-text","x":340,"y":228,"width":170,"height":105,"text":"PHI Blob Storage\nincoming / processed / failed","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"rectangle","id":"polling-trigger","x":580,"y":220,"width":190,"height":80,"strokeColor":"#F7630C","backgroundColor":"#FFF4CE","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"polling-trigger-text","x":590,"y":228,"width":170,"height":105,"text":"Timer poller\nBlob SDK + identity","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"arrow","id":"storage-polling","x":520,"y":260,"width":60,"height":0,"strokeColor":"#1e1e1e","strokeWidth":2,"points":[[0,0],[60,0]]},
+
+    {"type":"rectangle","id":"function","x":330,"y":380,"width":190,"height":90,"strokeColor":"#107C10","backgroundColor":"#DFF6DD","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"function-text","x":340,"y":390,"width":170,"height":105,"text":"Python Durable Functions\nLinux EP1\nextract + orchestrate","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"rectangle","id":"doc-intel","x":580,"y":370,"width":180,"height":90,"strokeColor":"#107C10","backgroundColor":"#DFF6DD","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"doc-intel-text","x":590,"y":380,"width":160,"height":105,"text":"Azure AI Document\nIntelligence\nprivate endpoint","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"ellipse","id":"sql","x":810,"y":370,"width":180,"height":95,"strokeColor":"#0078D4","backgroundColor":"#CFE4FA","fillStyle":"solid","strokeWidth":2},
+    {"type":"text","id":"sql-text","x":825,"y":382,"width":150,"height":105,"text":"Azure SQL\nDocuments, ledger,\ndecision trail","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"arrow","id":"polling-function","x":620,"y":300,"width":-100,"height":100,"strokeColor":"#1e1e1e","strokeWidth":2,"points":[[0,0],[-100,100]]},
+    {"type":"arrow","id":"function-ai","x":520,"y":415,"width":60,"height":0,"strokeColor":"#1e1e1e","strokeWidth":2,"points":[[0,0],[60,0]]},
+    {"type":"arrow","id":"function-sql","x":520,"y":440,"width":290,"height":-5,"strokeColor":"#1e1e1e","strokeWidth":2,"points":[[0,0],[290,-5]]},
+
+    {"type":"rectangle","id":"logic","x":330,"y":555,"width":220,"height":115,"strokeColor":"#5C2D91","backgroundColor":"#E8DAEF","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"logic-text","x":340,"y":565,"width":200,"height":140,"text":"Logic Apps Standard\nbusiness rules\nhuman approval + SLA","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"rectangle","id":"runtime-storage","x":600,"y":700,"width":180,"height":80,"strokeColor":"#495057","backgroundColor":"#F3F2F1","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"runtime-storage-text","x":610,"y":705,"width":160,"height":105,"text":"Runtime Storage\nDurable state\nhost + code packages","fontSize":13,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"rectangle","id":"key-vault","x":825,"y":700,"width":165,"height":80,"strokeColor":"#495057","backgroundColor":"#F3F2F1","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"key-vault-text","x":835,"y":705,"width":145,"height":105,"text":"Key Vault\nCMK + signed private\nworkflow callback","fontSize":13,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"arrow","id":"function-logic","x":425,"y":470,"width":15,"height":85,"strokeColor":"#5C2D91","strokeWidth":2,"points":[[0,0],[15,85]]},
+    {"type":"arrow","id":"logic-sql","x":550,"y":590,"width":300,"height":-125,"strokeColor":"#1e1e1e","strokeWidth":2,"points":[[0,0],[300,-125]]},
+
+    {"type":"rectangle","id":"external-container","x":1080,"y":150,"width":455,"height":650,"strokeColor":"#F7630C","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"external-label","x":1100,"y":160,"width":350,"height":50,"text":"Managed services and operations","fontSize":18,"fontFamily":2,"strokeColor":"#000000","textAlign":"left","verticalAlign":"top"},
+    {"type":"rectangle","id":"office","x":1110,"y":220,"width":180,"height":80,"strokeColor":"#F7630C","backgroundColor":"#FFF4CE","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"office-text","x":1120,"y":232,"width":160,"height":70,"text":"Office 365 Outlook\nreviewer approval","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"rectangle","id":"sharepoint","x":1320,"y":220,"width":180,"height":80,"strokeColor":"#F7630C","backgroundColor":"#FFF4CE","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"sharepoint-text","x":1330,"y":232,"width":160,"height":70,"text":"SharePoint Online\noptional archive","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"arrow","id":"logic-office","x":550,"y":590,"width":560,"height":-320,"strokeColor":"#F7630C","strokeWidth":2,"points":[[0,0],[560,-320]]},
+    {"type":"arrow","id":"logic-sharepoint","x":550,"y":615,"width":770,"height":-340,"strokeColor":"#F7630C","strokeWidth":2,"strokeStyle":"dashed","points":[[0,0],[770,-340]]},
+    {"type":"rectangle","id":"monitor","x":1110,"y":370,"width":390,"height":105,"strokeColor":"#0078D4","backgroundColor":"#CFE4FA","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"monitor-text","x":1125,"y":382,"width":360,"height":105,"text":"Azure Monitor + Log Analytics\nApplication Insights, alerts, workbook\n7-year archive retention","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"rectangle","id":"governance","x":1110,"y":525,"width":390,"height":90,"strokeColor":"#495057","backgroundColor":"#F3F2F1","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"governance-text","x":1125,"y":538,"width":360,"height":70,"text":"Azure Policy + Defender for Cloud\nfeature-flagged governance","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"rectangle","id":"identity","x":1110,"y":665,"width":390,"height":105,"strokeColor":"#5C2D91","backgroundColor":"#E8DAEF","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"identity-text","x":1125,"y":676,"width":360,"height":105,"text":"Microsoft Entra managed identities + RBAC\nkeyless data-plane access\nprivate endpoints + Private DNS","fontSize":14,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"},
+    {"type":"arrow","id":"telemetry","x":990,"y":445,"width":120,"height":-10,"strokeColor":"#0078D4","strokeWidth":2,"strokeStyle":"dashed","points":[[0,0],[120,-10]]},
+
+    {"type":"rectangle","id":"legend","x":40,"y":825,"width":1495,"height":90,"strokeColor":"#D13438","backgroundColor":"#FDE7E9","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"type":"text","id":"legend-text","x":60,"y":840,"width":1450,"height":105,"text":"Workshop exceptions: Function EP1 is not zone-redundant; SQL uses 35-day PITR without LTR; test VM is synthetic-data-only. Blob polling may add intake latency. All PHI data services remain private-endpoint-only.","fontSize":15,"fontFamily":2,"strokeColor":"#000000","textAlign":"center","verticalAlign":"middle"}
+  ],
+  "appState": {
+    "viewBackgroundColor": "#ffffff",
+    "gridSize": 20
+  },
+  "files": {}
+}

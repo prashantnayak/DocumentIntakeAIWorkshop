@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_comment": [
+      "RAW ARM TEMPLATE MODULE (deliberately not Bicep).",
+      "",
+      "Grants one Entra ID principal permission to USE a Microsoft.Web/connections",
+      "managed API connection at runtime. Logic Apps Standard workflows that",
+      "reference a managed API connection with authentication type",
+      "ManagedServiceIdentity authenticate to the connector runtime with the",
+      "workflow host's identity; that identity must hold an access policy on the",
+      "connection resource or every connector call fails with an authorization",
+      "error, even after interactive OAuth consent on the connection itself has",
+      "been completed.",
+      "",
+      "Why ARM JSON instead of Bicep: Microsoft.Web/connections/accessPolicies has",
+      "no published Bicep type at ANY api-version (verified: both 2016-06-01 and",
+      "2018-07-01-preview report BCP081 'does not have types available'). Declaring",
+      "it in Bicep would therefore require suppressing BCP081, which this",
+      "repository does not do. Authoring the resource in an ARM JSON template that",
+      "Bicep consumes as a module keeps `az bicep build` genuinely warning-free",
+      "without hiding a diagnostic. This is the same 'raw ARM exception' pattern",
+      "documented in docs/architecture.md for resource types AVM does not cover.",
+      "",
+      "Deployed as a separate module rather than inside api-connections.bicep",
+      "because the Logic App's system-assigned principal ID does not exist until",
+      "the Logic App site is deployed, which happens after the connection -- the",
+      "same ordering rationale as modules/storage-container-role-assignment.bicep."
+    ]
+  },
+  "parameters": {
+    "connectionName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing Microsoft.Web/connections resource."
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure region of the connection resource."
+      }
+    },
+    "tenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra ID tenant ID of the principal being granted access."
+      }
+    },
+    "principalObjectId": {
+      "type": "string",
+      "metadata": {
+        "description": "Object (principal) ID granted use of the connection. For Logic Apps Standard managed-connector authentication this is the Logic App SYSTEM-ASSIGNED identity."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/connections/accessPolicies",
+      "apiVersion": "2016-06-01",
+      "name": "[format('{0}/{1}', parameters('connectionName'), parameters('principalObjectId'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "principal": {
+          "type": "ActiveDirectory",
+          "identity": {
+            "tenantId": "[parameters('tenantId')]",
+            "objectId": "[parameters('principalObjectId')]"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "resourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Web/connections/accessPolicies', parameters('connectionName'), parameters('principalObjectId'))]"
+    }
+  }
+}

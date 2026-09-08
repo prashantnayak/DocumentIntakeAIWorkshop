@@ -1,0 +1,221 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "2.0.0.0",
+    "parameters": {
+      "reviewerGroupEmail": { "type": "string" },
+      "supervisorGroupEmail": { "type": "string" },
+      "reviewReminderAfterHours": { "type": "string" },
+      "reviewEscalationAfterHours": { "type": "string" }
+    },
+    "triggers": {
+      "Receive_sla_request": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "object",
+            "required": ["documentId", "notificationType"],
+            "properties": {
+              "documentId": { "type": "string", "format": "uuid" },
+              "notificationType": {
+                "type": "string",
+                "enum": ["Reminder", "Escalation"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "runtimeConfiguration": {
+          "secureData": {
+            "properties": ["inputs", "outputs"]
+          }
+        }
+      }
+    },
+    "actions": {
+      "Query_and_claim_notification": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "query": "DECLARE @Outstanding BIT = IIF(EXISTS (SELECT 1 FROM dbo.ProcessingInbox WHERE DocumentId=@DocumentId AND State='ReviewPending'), 1, 0); IF @Outstanding=1 EXEC dbo.usp_ClaimWorkflowOperation @DocumentId=@DocumentId, @OperationType=@OperationType, @LeaseOwner=@LeaseOwner, @LeaseDurationMin=30; ELSE SELECT CAST(0 AS BIT) AS Claimed;",
+            "queryParameters": {
+              "DocumentId": "@triggerBody()?['documentId']",
+              "OperationType": "@concat('Review', triggerBody()?['notificationType'])",
+              "LeaseOwner": "@workflow()?['run']?['name']"
+            }
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "sql",
+            "operationId": "executeQuery",
+            "serviceProviderId": "/serviceProviders/sql"
+          }
+        },
+        "runAfter": {},
+        "runtimeConfiguration": {
+          "secureData": {
+            "properties": ["inputs", "outputs"]
+          }
+        }
+      },
+      "Branch_on_notification_claim": {
+        "type": "If",
+        "expression": {
+          "and": [
+            {
+              "equals": [
+                "@coalesce(first(first(body('Query_and_claim_notification')))?['Claimed'], false)",
+                true
+              ]
+            }
+          ]
+        },
+        "actions": {
+          "Branch_on_notification_type": {
+            "type": "If",
+            "expression": {
+              "and": [
+                {
+                  "equals": [
+                    "@triggerBody()?['notificationType']",
+                    "Escalation"
+                  ]
+                }
+              ]
+            },
+            "actions": {
+              "Send_escalation_email": {
+                "type": "ApiConnection",
+                "inputs": {
+                  "host": {
+                    "connection": {
+                      "referenceName": "office365"
+                    }
+                  },
+                  "method": "post",
+                  "path": "/v2/Mail",
+                  "body": {
+                    "To": "@parameters('supervisorGroupEmail')",
+                    "Subject": "ESCALATION: document review overdue",
+                    "Body": "@{concat('Document reference ', triggerBody()?['documentId'], ' remains pending after ', parameters('reviewEscalationAfterHours'), ' hours and requires supervisor attention. This email intentionally contains no document content or extracted values.')}",
+                    "Importance": "High"
+                  }
+                },
+                "runAfter": {},
+                "runtimeConfiguration": {
+                  "secureData": {
+                    "properties": ["inputs", "outputs"]
+                  }
+                }
+              },
+              "Record_escalation": {
+                "type": "ServiceProvider",
+                "inputs": {
+                  "parameters": {
+                    "query": "INSERT INTO dbo.DecisionTrail (DocumentId, DocumentHash, BlobName, Stage, ClassifierVersion, Outcome, Detail, TimestampUtc) SELECT @DocumentId, COALESCE(DocumentHash, 'n/a'), BlobName, 'SlaMonitoring', 'n/a', 'Escalated', 'Review escalation notification sent.', SYSUTCDATETIME() FROM dbo.ProcessingInbox WHERE DocumentId=@DocumentId AND NOT EXISTS (SELECT 1 FROM dbo.DecisionTrail WHERE DocumentId=@DocumentId AND Outcome='Escalated'); EXEC dbo.usp_CompleteWorkflowOperation @DocumentId=@DocumentId, @OperationType='ReviewEscalation', @LeaseOwner=@LeaseOwner, @Succeeded=1;",
+                    "queryParameters": {
+                      "DocumentId": "@triggerBody()?['documentId']",
+                      "LeaseOwner": "@workflow()?['run']?['name']"
+                    }
+                  },
+                  "serviceProviderConfiguration": {
+                    "connectionName": "sql",
+                    "operationId": "executeQuery",
+                    "serviceProviderId": "/serviceProviders/sql"
+                  }
+                },
+                "runAfter": {
+                  "Send_escalation_email": ["Succeeded"]
+                }
+              }
+            },
+            "else": {
+              "actions": {
+                "Send_reminder_email": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connection": {
+                        "referenceName": "office365"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/v2/Mail",
+                    "body": {
+                      "To": "@parameters('reviewerGroupEmail')",
+                      "Subject": "Reminder: document review pending",
+                      "Body": "@{concat('Document reference ', triggerBody()?['documentId'], ' remains pending after ', parameters('reviewReminderAfterHours'), ' hours. Please action it from the original approval email. This email intentionally contains no document content or extracted values.')}",
+                      "Importance": "Normal"
+                    }
+                  },
+                  "runAfter": {},
+                  "runtimeConfiguration": {
+                    "secureData": {
+                      "properties": ["inputs", "outputs"]
+                    }
+                  }
+                },
+                "Record_reminder": {
+                  "type": "ServiceProvider",
+                  "inputs": {
+                    "parameters": {
+                      "query": "INSERT INTO dbo.DecisionTrail (DocumentId, DocumentHash, BlobName, Stage, ClassifierVersion, Outcome, Detail, TimestampUtc) SELECT @DocumentId, COALESCE(DocumentHash, 'n/a'), BlobName, 'SlaMonitoring', 'n/a', 'ReminderSent', 'Review reminder notification sent.', SYSUTCDATETIME() FROM dbo.ProcessingInbox WHERE DocumentId=@DocumentId AND NOT EXISTS (SELECT 1 FROM dbo.DecisionTrail WHERE DocumentId=@DocumentId AND Outcome='ReminderSent'); EXEC dbo.usp_CompleteWorkflowOperation @DocumentId=@DocumentId, @OperationType='ReviewReminder', @LeaseOwner=@LeaseOwner, @Succeeded=1;",
+                      "queryParameters": {
+                        "DocumentId": "@triggerBody()?['documentId']",
+                        "LeaseOwner": "@workflow()?['run']?['name']"
+                      }
+                    },
+                    "serviceProviderConfiguration": {
+                      "connectionName": "sql",
+                      "operationId": "executeQuery",
+                      "serviceProviderId": "/serviceProviders/sql"
+                    }
+                  },
+                  "runAfter": {
+                    "Send_reminder_email": ["Succeeded"]
+                  }
+                }
+              }
+            },
+            "runAfter": {}
+          },
+          "Return_notification_sent": {
+            "type": "Response",
+            "kind": "Http",
+            "inputs": {
+              "statusCode": 200,
+              "body": {
+                "documentId": "@triggerBody()?['documentId']",
+                "status": "@concat(triggerBody()?['notificationType'], 'Sent')"
+              }
+            },
+            "runAfter": {
+              "Branch_on_notification_type": ["Succeeded"]
+            }
+          }
+        },
+        "else": {
+          "actions": {
+            "Return_notification_skipped": {
+              "type": "Response",
+              "kind": "Http",
+              "inputs": {
+                "statusCode": 200,
+                "body": {
+                  "documentId": "@triggerBody()?['documentId']",
+                  "status": "NoNotificationRequired"
+                }
+              },
+              "runAfter": {}
+            }
+          }
+        },
+        "runAfter": {
+          "Query_and_claim_notification": ["Succeeded"]
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "kind": "Stateful"
+}

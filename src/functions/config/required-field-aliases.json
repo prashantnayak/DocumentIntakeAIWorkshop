@@ -1,0 +1,5 @@
+{
+  "PatientIdentifier": ["Patient ID", "Patient Identifier", "MRN", "Medical Record Number", "Member ID"],
+  "DateOfService": ["Date of Service", "Service Date", "DOS", "Visit Date", "Encounter Date"],
+  "Provider": ["Provider", "Provider Name", "Physician", "Rendering Provider", "Referring Provider"]
+}

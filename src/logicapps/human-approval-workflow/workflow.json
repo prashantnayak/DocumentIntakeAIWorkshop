@@ -1,0 +1,419 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "2.0.0.0",
+    "parameters": {
+      "reviewerGroupEmail": { "type": "string" },
+      "reviewReminderAfterHours": { "type": "string" },
+      "reviewEscalationAfterHours": { "type": "string" },
+      "accessLinkExpiryHours": { "type": "string" },
+      "phiContainerName": { "type": "string" }
+    },
+    "triggers": {
+      "Receive_review_request": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "object",
+            "required": ["documentId", "blobName", "documentHash", "documentType", "confidence", "classifierVersion", "requiredFieldValues", "missingRequiredFields", "accessLinkUrl", "accessLinkExpiresOn"],
+            "properties": {
+              "documentId": { "type": "string", "format": "uuid" },
+              "blobName": { "type": "string" },
+              "documentHash": { "type": "string" },
+              "documentType": { "type": "string" },
+              "confidence": { "type": "number" },
+              "classifierVersion": { "type": "string" },
+              "requiredFieldValues": { "type": "object" },
+              "missingRequiredFields": { "type": "array" },
+              "accessLinkUrl": { "type": "string" },
+              "accessLinkExpiresOn": { "type": "string" },
+              "sidecarBlobName": { "type": "string" }
+            }
+          }
+        },
+        "runtimeConfiguration": {
+          "secureData": {
+            "properties": ["inputs", "outputs"]
+          }
+        }
+      }
+    },
+    "actions": {
+      "Claim_approval_run": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "query": "EXEC dbo.usp_ClaimWorkflowOperation @DocumentId=@DocumentId, @OperationType='ApprovalRun', @LeaseOwner=@LeaseOwner, @LeaseDurationMin=10080;",
+            "queryParameters": {
+              "DocumentId": "@triggerBody()?['documentId']",
+              "LeaseOwner": "@workflow()?['run']?['name']"
+            }
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "sql",
+            "operationId": "executeQuery",
+            "serviceProviderId": "/serviceProviders/sql"
+          }
+        },
+        "runAfter": {},
+        "runtimeConfiguration": {
+          "secureData": {
+            "properties": ["inputs"]
+          }
+        }
+      },
+      "Branch_on_claim": {
+        "type": "If",
+        "expression": {
+          "and": [
+            {
+              "equals": [
+                "@coalesce(first(first(body('Claim_approval_run')))?['Claimed'], false)",
+                true
+              ]
+            }
+          ]
+        },
+        "actions": {
+          "Record_pending_review": {
+            "type": "ServiceProvider",
+            "inputs": {
+              "parameters": {
+                "query": "INSERT INTO dbo.DecisionTrail (DocumentId, DocumentHash, BlobName, Stage, ClassifierVersion, Confidence, RuleFired, Outcome, Detail, TimestampUtc) SELECT @DocumentId, @DocumentHash, @BlobName, 'HumanApproval', @ClassifierVersion, @Confidence, 'AuthoritativeBusinessRules', 'PendingReview', 'Approval workflow accepted the review request.', SYSUTCDATETIME() WHERE NOT EXISTS (SELECT 1 FROM dbo.DecisionTrail WHERE DocumentId=@DocumentId AND Outcome='PendingReview');",
+                "queryParameters": {
+                  "DocumentId": "@triggerBody()?['documentId']",
+                  "DocumentHash": "@triggerBody()?['documentHash']",
+                  "BlobName": "@triggerBody()?['blobName']",
+                  "ClassifierVersion": "@triggerBody()?['classifierVersion']",
+                  "Confidence": "@triggerBody()?['confidence']"
+                }
+              },
+              "serviceProviderConfiguration": {
+                "connectionName": "sql",
+                "operationId": "executeQuery",
+                "serviceProviderId": "/serviceProviders/sql"
+              }
+            },
+            "runAfter": {},
+            "runtimeConfiguration": {
+              "secureData": {
+                "properties": ["inputs", "outputs"]
+              }
+            }
+          },
+          "Return_review_accepted": {
+            "type": "Response",
+            "kind": "Http",
+            "inputs": {
+              "statusCode": 202,
+              "body": {
+                "documentId": "@triggerBody()?['documentId']",
+                "status": "ReviewAccepted"
+              }
+            },
+            "runAfter": {
+              "Record_pending_review": ["Succeeded"]
+            },
+            "runtimeConfiguration": {
+              "secureData": {
+                "properties": ["inputs"]
+              }
+            }
+          },
+          "Send_approval_email": {
+            "type": "ApiConnectionWebhook",
+            "inputs": {
+              "host": {
+                "connection": {
+                  "referenceName": "office365"
+                }
+              },
+              "body": {
+                "NotificationUrl": "@{listCallbackUrl()}",
+                "Message": {
+                  "To": "@parameters('reviewerGroupEmail')",
+                  "Subject": "@{concat('Document review required: ', triggerBody()?['documentType'])}",
+                  "Body": "@{concat('A document requires manual review.<br>Reference: ', triggerBody()?['documentId'], '<br>Classification: ', triggerBody()?['documentType'], '<br>Confidence: ', string(triggerBody()?['confidence']), '<br>Missing required fields (names only): ', if(empty(triggerBody()?['missingRequiredFields']), 'none', join(triggerBody()?['missingRequiredFields'], ', ')), '<br><br>Open the document from a network-connected workstation. Link expires ', triggerBody()?['accessLinkExpiresOn'], ' (maximum ', parameters('accessLinkExpiryHours'), ' hours):<br><a href=\"', triggerBody()?['accessLinkUrl'], '\">Open document</a><br><br>This email intentionally contains no extracted values or document content.')}",
+                  "Options": "Approve, Reject",
+                  "Importance": "Normal"
+                }
+              },
+              "path": "/approvalmail/$subscriptions"
+            },
+            "runAfter": {
+              "Return_review_accepted": ["Succeeded"]
+            },
+            "runtimeConfiguration": {
+              "secureData": {
+                "properties": ["inputs", "outputs"]
+              }
+            }
+          },
+          "Delay_review_reminder": {
+            "type": "Wait",
+            "inputs": {
+              "interval": {
+                "count": "@int(parameters('reviewReminderAfterHours'))",
+                "unit": "Hour"
+              }
+            },
+            "runAfter": {
+              "Return_review_accepted": ["Succeeded"]
+            }
+          },
+          "Invoke_reminder_workflow": {
+            "type": "Workflow",
+            "inputs": {
+              "host": {
+                "workflow": {
+                  "id": "sla-notification-workflow"
+                }
+              },
+              "body": {
+                "documentId": "@triggerBody()?['documentId']",
+                "notificationType": "Reminder"
+              }
+            },
+            "runAfter": {
+              "Delay_review_reminder": ["Succeeded"]
+            },
+            "runtimeConfiguration": {
+              "secureData": {
+                "properties": ["inputs", "outputs"]
+              }
+            }
+          },
+          "Delay_review_escalation": {
+            "type": "Wait",
+            "inputs": {
+              "interval": {
+                "count": "@int(parameters('reviewEscalationAfterHours'))",
+                "unit": "Hour"
+              }
+            },
+            "runAfter": {
+              "Return_review_accepted": ["Succeeded"]
+            }
+          },
+          "Invoke_escalation_workflow": {
+            "type": "Workflow",
+            "inputs": {
+              "host": {
+                "workflow": {
+                  "id": "sla-notification-workflow"
+                }
+              },
+              "body": {
+                "documentId": "@triggerBody()?['documentId']",
+                "notificationType": "Escalation"
+              }
+            },
+            "runAfter": {
+              "Delay_review_escalation": ["Succeeded"]
+            },
+            "runtimeConfiguration": {
+              "secureData": {
+                "properties": ["inputs", "outputs"]
+              }
+            }
+          },
+          "Branch_on_reviewer_decision": {
+            "type": "If",
+            "expression": {
+              "and": [
+                {
+                  "equals": [
+                    "@coalesce(body('Send_approval_email')?['SelectedOption'], 'Reject')",
+                    "Approve"
+                  ]
+                }
+              ]
+            },
+            "actions": {
+              "Read_approved_source_blob": {
+                "type": "Http",
+                "inputs": {
+                  "method": "GET",
+                  "uri": "@triggerBody()?['accessLinkUrl']"
+                },
+                "runAfter": {},
+                "runtimeConfiguration": {
+                  "secureData": {
+                    "properties": ["inputs", "outputs"]
+                  }
+                }
+              },
+              "Write_approved_blob": {
+                "type": "ServiceProvider",
+                "inputs": {
+                  "parameters": {
+                    "containerName": "@parameters('phiContainerName')",
+                    "blobName": "@concat('processed/', last(split(triggerBody()?['blobName'], '/')))",
+                    "content": "@body('Read_approved_source_blob')"
+                  },
+                  "serviceProviderConfiguration": {
+                    "connectionName": "AzureBlob",
+                    "operationId": "uploadBlob",
+                    "serviceProviderId": "/serviceProviders/AzureBlob"
+                  }
+                },
+                "runAfter": {
+                  "Read_approved_source_blob": ["Succeeded"]
+                },
+                "runtimeConfiguration": {
+                  "secureData": {
+                    "properties": ["inputs", "outputs"]
+                  }
+                }
+              },
+              "Persist_approval": {
+                "type": "ServiceProvider",
+                "inputs": {
+                  "parameters": {
+                    "query": "INSERT INTO dbo.Documents (DocumentId, DocumentHash, BlobName, DocumentType, Confidence, PatientIdentifier, DateOfService, Provider, ExtractedFieldsJson, ApprovedBy, ApprovedAtUtc) SELECT @DocumentId, @DocumentHash, @BlobName, @DocumentType, @Confidence, JSON_VALUE(@ExtractedFieldsJson, '$.PatientIdentifier'), JSON_VALUE(@ExtractedFieldsJson, '$.DateOfService'), JSON_VALUE(@ExtractedFieldsJson, '$.Provider'), @ExtractedFieldsJson, @ApprovedBy, SYSUTCDATETIME() WHERE NOT EXISTS (SELECT 1 FROM dbo.Documents WHERE DocumentId=@DocumentId); INSERT INTO dbo.DecisionTrail (DocumentId, DocumentHash, BlobName, Stage, ClassifierVersion, Confidence, RuleFired, Outcome, ApproverIdentity, TimestampUtc) SELECT @DocumentId, @DocumentHash, @BlobName, 'HumanApproval', @ClassifierVersion, @Confidence, 'ReviewerDecision', 'Approved', @ApprovedBy, SYSUTCDATETIME() WHERE NOT EXISTS (SELECT 1 FROM dbo.DecisionTrail WHERE DocumentId=@DocumentId AND Outcome='Approved'); EXEC dbo.usp_UpdateProcessingState @DocumentId=@DocumentId, @State='Approved', @ExpectedState='ReviewPending', @ClearPayload=1; EXEC dbo.usp_CompleteWorkflowOperation @DocumentId=@DocumentId, @OperationType='ApprovalRun', @LeaseOwner=@LeaseOwner, @Succeeded=1;",
+                    "queryParameters": {
+                      "DocumentId": "@triggerBody()?['documentId']",
+                      "DocumentHash": "@triggerBody()?['documentHash']",
+                      "BlobName": "@triggerBody()?['blobName']",
+                      "DocumentType": "@triggerBody()?['documentType']",
+                      "Confidence": "@triggerBody()?['confidence']",
+                      "ClassifierVersion": "@triggerBody()?['classifierVersion']",
+                      "ExtractedFieldsJson": "@string(triggerBody()?['requiredFieldValues'])",
+                      "ApprovedBy": "@coalesce(body('Send_approval_email')?['UserEmailAddress'], body('Send_approval_email')?['UserId'], 'unknown-reviewer')",
+                      "LeaseOwner": "@workflow()?['run']?['name']"
+                    }
+                  },
+                  "serviceProviderConfiguration": {
+                    "connectionName": "sql",
+                    "operationId": "executeQuery",
+                    "serviceProviderId": "/serviceProviders/sql"
+                  }
+                },
+                "runAfter": {
+                  "Write_approved_blob": ["Succeeded"]
+                },
+                "runtimeConfiguration": {
+                  "secureData": {
+                    "properties": ["inputs", "outputs"]
+                  }
+                }
+              }
+            },
+            "else": {
+              "actions": {
+                "Read_rejected_source_blob": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "@triggerBody()?['accessLinkUrl']"
+                  },
+                  "runAfter": {},
+                  "runtimeConfiguration": {
+                    "secureData": {
+                      "properties": ["inputs", "outputs"]
+                    }
+                  }
+                },
+                "Write_rejected_blob": {
+                  "type": "ServiceProvider",
+                  "inputs": {
+                    "parameters": {
+                      "containerName": "@parameters('phiContainerName')",
+                      "blobName": "@concat('failed/', last(split(triggerBody()?['blobName'], '/')))",
+                      "content": "@body('Read_rejected_source_blob')"
+                    },
+                    "serviceProviderConfiguration": {
+                      "connectionName": "AzureBlob",
+                      "operationId": "uploadBlob",
+                      "serviceProviderId": "/serviceProviders/AzureBlob"
+                    }
+                  },
+                  "runAfter": {
+                    "Read_rejected_source_blob": ["Succeeded"]
+                  },
+                  "runtimeConfiguration": {
+                    "secureData": {
+                      "properties": ["inputs", "outputs"]
+                    }
+                  }
+                },
+                "Persist_rejection": {
+                  "type": "ServiceProvider",
+                  "inputs": {
+                    "parameters": {
+                      "query": "INSERT INTO dbo.DecisionTrail (DocumentId, DocumentHash, BlobName, Stage, ClassifierVersion, Confidence, RuleFired, Outcome, ApproverIdentity, TimestampUtc) SELECT @DocumentId, @DocumentHash, @BlobName, 'HumanApproval', @ClassifierVersion, @Confidence, 'ReviewerDecision', 'Rejected', @ApprovedBy, SYSUTCDATETIME() WHERE NOT EXISTS (SELECT 1 FROM dbo.DecisionTrail WHERE DocumentId=@DocumentId AND Outcome='Rejected'); EXEC dbo.usp_UpdateProcessingState @DocumentId=@DocumentId, @State='Rejected', @ExpectedState='ReviewPending', @ClearPayload=1; EXEC dbo.usp_CompleteWorkflowOperation @DocumentId=@DocumentId, @OperationType='ApprovalRun', @LeaseOwner=@LeaseOwner, @Succeeded=1;",
+                      "queryParameters": {
+                        "DocumentId": "@triggerBody()?['documentId']",
+                        "DocumentHash": "@triggerBody()?['documentHash']",
+                        "BlobName": "@triggerBody()?['blobName']",
+                        "ClassifierVersion": "@triggerBody()?['classifierVersion']",
+                        "Confidence": "@triggerBody()?['confidence']",
+                        "ApprovedBy": "@coalesce(body('Send_approval_email')?['UserEmailAddress'], body('Send_approval_email')?['UserId'], 'unknown-reviewer')",
+                        "LeaseOwner": "@workflow()?['run']?['name']"
+                      }
+                    },
+                    "serviceProviderConfiguration": {
+                      "connectionName": "sql",
+                      "operationId": "executeQuery",
+                      "serviceProviderId": "/serviceProviders/sql"
+                    }
+                  },
+                  "runAfter": {
+                    "Write_rejected_blob": ["Succeeded"]
+                  },
+                  "runtimeConfiguration": {
+                    "secureData": {
+                      "properties": ["inputs", "outputs"]
+                    }
+                  }
+                }
+              }
+            },
+            "runAfter": {
+              "Send_approval_email": ["Succeeded"]
+            }
+          },
+          "Delete_terminal_sidecar": {
+            "type": "ServiceProvider",
+            "inputs": {
+              "parameters": {
+                "containerName": "@parameters('phiContainerName')",
+                "blobName": "@triggerBody()?['sidecarBlobName']"
+              },
+              "serviceProviderConfiguration": {
+                "connectionName": "AzureBlob",
+                "operationId": "deleteBlob",
+                "serviceProviderId": "/serviceProviders/AzureBlob"
+              }
+            },
+            "runAfter": {
+              "Branch_on_reviewer_decision": ["Succeeded"]
+            }
+          }
+        },
+        "else": {
+          "actions": {
+            "Return_existing_review": {
+              "type": "Response",
+              "kind": "Http",
+              "inputs": {
+                "statusCode": 200,
+                "body": {
+                  "documentId": "@triggerBody()?['documentId']",
+                  "status": "AlreadyClaimed"
+                }
+              },
+              "runAfter": {}
+            }
+          }
+        },
+        "runAfter": {
+          "Claim_approval_run": ["Succeeded"]
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "kind": "Stateful"
+}
